@@ -7,7 +7,7 @@ import LoginPage from '../Pages/LoginPage';
 import NotFoundPage from '../Pages/NotFoundPage';
 
 import {Navigate} from 'react-router-dom';
-import {useStore} from './store';
+import {useStore} from './Store';
 
 const ProtectedRoute = ({children}) => {
   const {user} = useStore();

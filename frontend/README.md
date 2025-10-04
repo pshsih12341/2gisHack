@@ -1,70 +1,46 @@
-# Getting Started with Create React App
+# Frontend Template
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Это шаблон проекта на React, Vite, Zustand, shadcn/ui для быстрого создания MVP и проверок теорий 1.0v.
 
-## Available Scripts
+## 🚀 Технологии
 
-In the project directory, you can run:
+- **React** - библиотека для создания пользовательских интерфейсов
+- **Vite** - быстрый инструмент сборки
+- **Zustand** - легковесное управление состоянием
+- **shadcn/ui** - компоненты интерфейса
+- **Tailwind CSS** - утилитарный CSS фреймворк
+- **React Router** - маршрутизация
 
-### `npm start`
+## 💡 Почему этот шаблон идеален для MVP?
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### ⚡ Быстрый старт
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- **Стек** - Позволяет моментально развернуть сборку на https://vercel.com/ + можно тут же развернуть бэк на Node.js
+- **Shadcn/ui + Tailwind** - Верстка никогда еще не была настолько быстрой + нереальное количество различных кастомизируемых графиков
+- **Поднятие в одну команду** - Просто npm i + npm run dev и на http://localhost:3000/ смотрим приложение, для деплоя npm run build и npm run format для притера
 
-### `npm test`
+### 🧩 Гибкость
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- **Shadcn** - Чтобы поменять дизайн достаточно согласовать новые цвета с шадовской таблицей цветов
+- **API слой** - HTTP клиенты готовые к расширению, интерсепторам и авторизации
+- **Отсутствие TS** - Никакой возни с типами // TO DO версия с TS
+- **Zustand** - Стор из коробки готовый к разделению на слайсы
 
-### `npm run build`
+### 🔄 Масштабируемость
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- **Принцип** - Pages по сути раздельный функционал => при росте можно разделить на микрофронты
+- Весь общий функционал выносится в Shared, который можно хостить в npm
+- Структура легко расширяется при росте проекта
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## 📁 Структура проекта
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```
+src/
+├── Api/           # API конфигурация и HTTP клиент
+├── App/           # Основное приложение и роутинг
+├── components/    # UI компоненты (shadcn/ui)
+├── Pages/         # Страницы приложения
+└── Shared/        # Общие ресурсы и хуки
+```
 
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## 💡 Изначально шаблон делался для участия в хакатонах, буду докручивать, если есть предложения пишите мне в тг канал https://t.me/frontendDetox

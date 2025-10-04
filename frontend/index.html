@@ -1,13 +1,43 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Инклюзивное Progressive Web App для 2GIS Hackathon с поддержкой скринридеров" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="2GIS Hack" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta name="msapplication-tap-highlight" content="no" />
+
+    <!-- Accessibility Meta Tags -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+
+    <!-- Mobile Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Icons -->
+    <link rel="apple-touch-icon" href="/icon-192x192.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512x512.png" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <title>2GIS Hack App - Инклюзивное приложение</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root" role="application" aria-label="2GIS Hack - Инклюзивное приложение"></div>
     <script type="module" src="/src/App/App.jsx"></script>
   </body>
+  <script src="https://maps.api.2gis.ru/2.0/loader.js?pkg=full"></script>
 </html>

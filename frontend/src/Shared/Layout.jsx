@@ -1,24 +1,35 @@
 import React from 'react';
-import {Link, useNavigate, Outlet} from 'react-router-dom';
-import {useStore} from '../App/Store';
+import {Outlet} from 'react-router-dom';
 
 const Layout = () => {
-  const {user, setUser} = useStore();
-  const navigate = useNavigate();
-
   return (
-    <div className='layout'>
-      <header className='header'>
-        <nav className='nav'></nav>
-      </header>
-
-      <main className='main-content'>
+    <div className='h-screen flex flex-col'>
+      <main className='flex-1 overflow-hidden'>
         <Outlet />
       </main>
 
-      <footer className='footer'>
-        <p>&copy; 2024 Мое приложение. Все права защищены.</p>
-      </footer>
+      <nav className='bg-white border-t safe-area-bottom' role='navigation' aria-label='Основная навигация'>
+        <div className='flex'>
+          <button className='flex-1 flex flex-col items-center py-3 px-2 text-gray-600 hover:text-blue-600 focus-visible'>
+            <span className='text-2xl mb-1' aria-hidden='true'>
+              🗺️
+            </span>
+            <span className='text-xs font-medium'>Карта</span>
+          </button>
+          <button className='flex-1 flex flex-col items-center py-3 px-2 text-gray-600 hover:text-blue-600 focus-visible'>
+            <span className='text-2xl mb-1' aria-hidden='true'>
+              💬
+            </span>
+            <span className='text-xs font-medium'>Чат</span>
+          </button>
+          <button className='flex-1 flex flex-col items-center py-3 px-2 text-gray-600 hover:text-blue-600 focus-visible'>
+            <span className='text-2xl mb-1' aria-hidden='true'>
+              👤
+            </span>
+            <span className='text-xs font-medium'>Профиль</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 };

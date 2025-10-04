@@ -972,58 +972,37 @@ class MapAssistant:
 		# Return only the first route to keep response size manageable
 		return routes[:1] if routes else []
 	
-	async def _get_taxi_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
-							   waypoints: List[RoutePoint] = None, 
-							   route_preference: str = None) -> List[Route]:
-		"""Get taxi routes using 2GIS Routing API."""
-		logger.info(f"🚕 TAXI ROUTING: Getting taxi routes")
+	async def _create_routing_segments(self, start_point: RoutePoint, end_point: RoutePoint, 
+									   waypoints: List[RoutePoint] = None, 
+									   transport_type: str = "taxi",
+									   route_preference: str = None) -> List[Route]:
+		"""Create routing segments between consecutive points."""
+		logger.info(f"🔄 SEGMENTS ROUTING: Creating {transport_type} segments")
 		
-		# For taxi, we need to create separate routes for each segment
-		# if there are waypoints, we'll create multiple taxi routes
+		# Always create segments: start -> waypoint1 -> waypoint2 -> ... -> end
+		all_points = [start_point]
 		if waypoints:
-			# Create route from start to first waypoint
-			segments = []
-			current_start = start_point
+			all_points.extend(waypoints)
+		all_points.append(end_point)
+		
+		# Create segments between consecutive points
+		segments = []
+		for i in range(len(all_points) - 1):
+			current_start = all_points[i]
+			current_end = all_points[i + 1]
 			
-			for waypoint in waypoints:
-				segment_payload = {
-					"points": [
-						{
-							"lat": current_start.latitude,
-							"lon": current_start.longitude
-						},
-						{
-							"lat": waypoint.latitude,
-							"lon": waypoint.longitude
-						}
-					],
-					"transport": "taxi",
-					"output": "detailed",
-					"locale": "ru"
-				}
-				
-				# Add routing parameters based on preferences
-				routing_params = self._build_routing_params(route_preference)
-				if routing_params:
-					segment_payload.update(routing_params)
-				
-				segment_routes = await self._make_routing_request(segment_payload, "taxi")
-				segments.extend(segment_routes)
-				current_start = waypoint
-			
-			# Create final segment from last waypoint to end
-			final_payload = {
+			segment_payload = {
 				"points": [
 					{
 						"lat": current_start.latitude,
 						"lon": current_start.longitude
 					},
 					{
-						"lat": end_point.latitude,
-						"lon": end_point.longitude
+						"lat": current_end.latitude,
+						"lon": current_end.longitude
 					}
 				],
-				"transport": "taxi",
+				"transport": transport_type,
 				"output": "detailed",
 				"locale": "ru"
 			}
@@ -1031,291 +1010,62 @@ class MapAssistant:
 			# Add routing parameters based on preferences
 			routing_params = self._build_routing_params(route_preference)
 			if routing_params:
-				final_payload.update(routing_params)
+				segment_payload.update(routing_params)
 			
-			final_routes = await self._make_routing_request(final_payload, "taxi")
-			segments.extend(final_routes)
+			# Add pedestrian-specific parameters for walking
+			if transport_type == "pedestrian":
+				params = self._build_pedestrian_params(route_preference)
+				if params:
+					segment_payload["params"] = params
 			
-			return segments
-		else:
-			# Simple route without waypoints
-			payload = {
-				"points": [
-					{
-						"lat": start_point.latitude,
-						"lon": start_point.longitude
-					},
-					{
-						"lat": end_point.latitude,
-						"lon": end_point.longitude
-					}
-				],
-				"transport": "taxi",
-				"output": "detailed",
-				"locale": "ru"
-			}
-			
-			# Add routing parameters based on preferences
-			routing_params = self._build_routing_params(route_preference)
-			if routing_params:
-				payload.update(routing_params)
-			
-			return await self._make_routing_request(payload, "taxi")
+			segment_routes = await self._make_routing_request(segment_payload, transport_type)
+			segments.extend(segment_routes)
+		
+		# Return only the first route to keep response size manageable
+		return segments[:1] if segments else []
+	
+	
+	async def _get_taxi_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+							   waypoints: List[RoutePoint] = None, 
+							   route_preference: str = None) -> List[Route]:
+		"""Get taxi routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚕 TAXI ROUTING: Getting taxi routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "taxi", route_preference)
 	
 	async def _get_car_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 							  waypoints: List[RoutePoint] = None, 
 							  route_preference: str = None) -> List[Route]:
-		"""Get car routes using 2GIS Routing API."""
-		logger.info(f"🚗 CAR ROUTING: Getting car routes")
-		
-		# For car, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "car",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "car")
+		"""Get car routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚗 CAR ROUTING: Getting car routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "car", route_preference)
 	
 	async def _get_scooter_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 								  waypoints: List[RoutePoint] = None, 
 								  route_preference: str = None) -> List[Route]:
-		"""Get scooter routes using 2GIS Routing API."""
-		logger.info(f"🛴 SCOOTER ROUTING: Getting scooter routes")
-		
-		# For scooter, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"type": "stop",
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "scooter",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"type": "stop",
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"type": "stop", 
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "scooter")
+		"""Get scooter routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🛴 SCOOTER ROUTING: Getting scooter routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "scooter", route_preference)
 	
 	async def _get_bicycle_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 								  waypoints: List[RoutePoint] = None, 
 								  route_preference: str = None) -> List[Route]:
-		"""Get bicycle routes using 2GIS Routing API."""
-		logger.info(f"🚴 BICYCLE ROUTING: Getting bicycle routes")
-		
-		# For bicycle, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"type": "stop",
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "bicycle",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"type": "stop",
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"type": "stop", 
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "bicycle")
+		"""Get bicycle routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚴 BICYCLE ROUTING: Getting bicycle routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "bicycle", route_preference)
 	
 	async def _get_emergency_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 									waypoints: List[RoutePoint] = None, 
 									route_preference: str = None) -> List[Route]:
-		"""Get emergency routes using 2GIS Routing API."""
-		logger.info(f"🚨 EMERGENCY ROUTING: Getting emergency routes")
-		
-		# For emergency, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"type": "stop",
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "emergency",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"type": "stop",
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"type": "stop", 
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "emergency")
+		"""Get emergency routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚨 EMERGENCY ROUTING: Getting emergency routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "emergency", route_preference)
 	
 	async def _get_truck_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 								waypoints: List[RoutePoint] = None, 
 								route_preference: str = None) -> List[Route]:
-		"""Get truck routes using 2GIS Routing API."""
-		logger.info(f"🚛 TRUCK ROUTING: Getting truck routes")
-		
-		# For truck, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"type": "stop",
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "truck",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"type": "stop",
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"type": "stop", 
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "truck")
-	
-	async def _get_motorcycle_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
-									 waypoints: List[RoutePoint] = None, 
-									 route_preference: str = None) -> List[Route]:
-		"""Get motorcycle routes using 2GIS Routing API."""
-		logger.info(f"🏍️ MOTORCYCLE ROUTING: Getting motorcycle routes")
-		
-		# For motorcycle, we can use multiple points in a single request
-		payload = {
-			"points": [
-				{
-					"type": "stop",
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				}
-			],
-			"transport": "motorcycle",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add waypoints if provided
-		if waypoints:
-			for wp in waypoints:
-				payload["points"].append({
-					"type": "stop",
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				})
-		
-		# Add end point
-		payload["points"].append({
-			"type": "stop", 
-			"lat": end_point.latitude,
-			"lon": end_point.longitude
-		})
-		
-		# Add routing parameters based on preferences
-		routing_params = self._build_routing_params(route_preference)
-		if routing_params:
-			payload.update(routing_params)
-		
-		return await self._make_routing_request(payload, "motorcycle")
+		"""Get truck routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚛 TRUCK ROUTING: Getting truck routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "truck", route_preference)
 	
 	async def _get_public_transport_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 										   waypoints: List[RoutePoint] = None,
@@ -1464,43 +1214,10 @@ class MapAssistant:
 	async def _get_walking_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 								  waypoints: List[RoutePoint] = None,
 								  route_preference: str = None) -> List[Route]:
-		"""Get walking routes using 2GIS Routing API."""
-		logger.info(f"🚶 WALKING ROUTING: Getting walking routes")
-		
-		payload = {
-			"points": [
-				{
-					"lat": start_point.latitude,
-					"lon": start_point.longitude
-				},
-				{
-					"lat": end_point.latitude,
-					"lon": end_point.longitude
-				}
-			],
-			"transport": "pedestrian",
-			"output": "detailed",
-			"locale": "ru"
-		}
-		
-		# Add pedestrian-specific parameters
-		params = self._build_pedestrian_params(route_preference)
-		if params:
-			payload["params"] = params
-		
-		if waypoints:
-			# Insert waypoints between start and end points
-			waypoint_points = [
-				{
-					"lat": wp.latitude,
-					"lon": wp.longitude
-				}
-				for wp in waypoints
-			]
-			# Insert waypoints before the last point (end point)
-			payload["points"][-1:-1] = waypoint_points
-		
-		return await self._make_routing_request(payload, "walking")
+		"""Get walking routes using 2GIS Routing API - always use segments approach."""
+		logger.info(f"🚶 WALKING ROUTING: Getting walking routes with segments approach")
+		return await self._create_routing_segments(start_point, end_point, waypoints, "pedestrian", route_preference)
+	
 	
 	async def _make_routing_request(self, payload: Dict[str, Any], transport_type: str) -> List[Route]:
 		"""Make request to 2GIS Routing API."""
@@ -1569,21 +1286,21 @@ class MapAssistant:
 		if data.get("status") == "OK" and "result" in data:
 			result_data = data["result"]
 			
-			if isinstance(result_data, list):
-				for i, route_data in enumerate(result_data):
-					# Create a simple route object with raw data
-					route = Route(
-						route_id=f"{transport_type}_{i+1}",
-						total_distance=route_data.get("total_distance", 0),
-						total_duration=route_data.get("total_duration", 0),
-						transfer_count=0,  # Not applicable for routing API
-						transport_types=[transport_type],
-						segments=[],  # We'll include raw data instead
-						summary=f"Маршрут {transport_type}: {route_data.get('ui_total_duration', 'N/A')}, {route_data.get('ui_total_distance', {}).get('value', 'N/A')} {route_data.get('ui_total_distance', {}).get('unit', 'км')}",
-						raw_data=route_data  # Include full raw data
-					)
-					routes.append(route)
-			else:
+			if isinstance(result_data, list) and len(result_data) > 0:
+				# Take only the first route
+				route_data = result_data[0]
+				route = Route(
+					route_id=f"{transport_type}_1",
+					total_distance=route_data.get("total_distance", 0),
+					total_duration=route_data.get("total_duration", 0),
+					transfer_count=0,  # Not applicable for routing API
+					transport_types=[transport_type],
+					segments=[],  # We'll include raw data instead
+					summary=f"Маршрут {transport_type}: {route_data.get('ui_total_duration', 'N/A')}, {route_data.get('ui_total_distance', {}).get('value', 'N/A')} {route_data.get('ui_total_distance', {}).get('unit', 'км')}",
+					raw_data=route_data  # Include only the first route's raw data
+				)
+				routes.append(route)
+			elif not isinstance(result_data, list):
 				# Single route result
 				route = Route(
 					route_id=f"{transport_type}_1",
@@ -1597,16 +1314,16 @@ class MapAssistant:
 				)
 				routes.append(route)
 		
-		# Return only the first route to keep response size manageable
-		return routes[:1] if routes else []
+		return routes
 	
 	def _parse_public_transport_response(self, data: List[Dict[str, Any]]) -> List[Route]:
 		"""Parse public transport API response - simplified version."""
 		routes = []
 		
-		for i, route_data in enumerate(data):
-			# Create a simplified route with raw data
-			route_id = f"public_transport_{i+1}"
+		if len(data) > 0:
+			# Take only the first route
+			route_data = data[0]
+			route_id = "public_transport_1"
 			total_distance = route_data.get("total_distance", 0)
 			total_duration = route_data.get("total_duration", 0)
 			transfer_count = route_data.get("transfer_count", 0)
@@ -1650,12 +1367,11 @@ class MapAssistant:
 				transport_types=list(transport_types),
 				segments=segments,
 				summary=summary,
-				raw_data=route_data  # Include raw data
+				raw_data=route_data  # Include only the first route's raw data
 			)
 			routes.append(route)
 		
-		# Return only the first route to keep response size manageable
-		return routes[:1] if routes else []
+		return routes
 	
 	def _parse_single_route(self, route_data: Dict[str, Any], route_id: str) -> Optional[Route]:
 		"""Parse a single route from API response."""

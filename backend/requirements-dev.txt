@@ -1,8 +1,4 @@
-SQLAlchemy==2.0.35
-uvicorn==0.30.6
-pydantic==2.9.2
-psycopg2-binary==2.9.9
-aiohttp==3.9.1
+# Временные зависимости без PostgreSQL для тестирования
 fastapi==0.115.0
 langchain-community==0.0.38
 langchain-core==0.1.52

@@ -2,14 +2,14 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .ping.router import router as ping_router
-from .database import Base, engine
+from .map_assistant.router import router as map_router
+# from .database import Base, engine  # Временно отключено
 from dotenv import load_dotenv
 
 load_dotenv()
 
-#* Инициализация базы данных
-Base.metadata.create_all(bind=engine)
+#* Инициализация базы данных - ВРЕМЕННО ОТКЛЮЧЕНО
+# Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="API",
@@ -27,4 +27,4 @@ app.add_middleware(
 )
 
 #* ROUTERS
-app.include_router(ping_router)
+app.include_router(map_router)

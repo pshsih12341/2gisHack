@@ -4,6 +4,19 @@ import Layout from '../Shared/Layout';
 import HomePage from '../Pages/HomePage';
 import NotFoundPage from '../Pages/NotFoundPage';
 
+import {Navigate} from 'react-router-dom';
+import {useStore} from './Store';
+
+const ProtectedRoute = ({children}) => {
+  const {user} = useStore();
+
+  if (!user) {
+    return <Navigate to='/login' replace />;
+  }
+
+  return children;
+};
+
 const Routing = () => {
   return (
     <Router>

@@ -1,0 +1,54 @@
+name: Frontend Deploy
+
+on:
+    workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+    build-and-push:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Login to Yandex Cloud Container Registry
+              id: login-cr
+              uses: yc-actions/yc-cr-login@v3
+              with:
+                yc-sa-json-credentials: ${{ secrets.YC_SA_KEY_JSON }}   
+              
+            - name: Build, tag, and push image to Yandex Cloud Container Registry
+              env:
+                CR_REGISTRY: ${{ secrets.CR_REGISTRY }}
+                CR_REPOSITORY: frontend
+                IMAGE_TAG: ${{ github.sha }}
+              run: |
+                cd frontend
+                docker build -t frontend:$IMAGE_TAG .
+                docker tag frontend:$IMAGE_TAG cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG
+                docker tag frontend:$IMAGE_TAG cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest
+
+                docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG
+                docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest
+
+    deploy:
+        needs: build-and-push
+        runs-on: ubuntu-latest
+        steps:
+            - name: Deploy to server via SSH
+              uses: appleboy/ssh-action@master
+              env:
+                YC_SA_JSON_KEY: ${{ secrets.YC_SA_KEY_JSON }}
+              with:
+                host: ${{ secrets.SSH_HOST }}
+                username: ${{ secrets.SSH_USERNAME }}
+                password: ${{ secrets.SSH_PASSWORD }}
+                script: |
+                    cd /root/2gisHack
+                    echo "$YC_SA_JSON_KEY" | docker login --username json_key --password-stdin cr.yandex
+                    docker compose pull frontend
+                    docker compose up -d --no-deps frontend
+                    docker system prune -f

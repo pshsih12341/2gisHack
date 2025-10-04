@@ -110,10 +110,23 @@ class Route:
 	raw_data: Optional[Dict[str, Any]] = None  # Raw data from 2GIS API
 
 @dataclass
+class RouteStage:
+	"""Represents a stage of a multi-stage route."""
+	stage_id: str
+	start_point: RoutePoint
+	end_point: RoutePoint
+	waypoints: List[RoutePoint] = None
+	transport_preference: str = "any"
+	route_preference: str = None
+	routes: List[Route] = None
+	description: str = ""
+
+@dataclass
 class EnhancedRouteResponse:
 	"""Enhanced response containing route points, routes and friendly text."""
 	points: List[RoutePoint]
 	routes: Optional[List[Route]] = None
+	stages: Optional[List[RouteStage]] = None  # Multi-stage routes
 	text: str = ""
 	success: bool = True
 	error_message: Optional[str] = None
@@ -276,6 +289,188 @@ class MapAssistant:
 		2GIS region ID (default: "moscow" for Moscow).
 	"""
 	
+	# Маппинг русских названий транспорта на типы Public Transport API
+	# Поддерживаем ВСЕ категории: "pedestrian" "metro" "light_metro" "suburban_train" "aeroexpress" 
+	# "tram" "bus" "trolleybus" "shuttle_bus" "monorail" "funicular_railway" "river_transport" 
+	# "cable_car" "light_rail" "premetro" "mcc" "mcd"
+	PUBLIC_TRANSPORT_MAPPING = {
+		# Пешеходные маршруты
+		"пешком": "pedestrian",
+		"пешая прогулка": "pedestrian",
+		"только пешком": "pedestrian",
+		"исключительно пешком": "pedestrian",
+		
+		# Метро и подземка
+		"метро": "metro",
+		"подземка": "metro",
+		"только метро": "metro",
+		"исключительно метро": "metro",
+		
+		# Легкое метро
+		"легкое метро": "light_metro",
+		"лёгкое метро": "light_metro",
+		"только легкое метро": "light_metro",
+		"только лёгкое метро": "light_metro",
+		"исключительно легкое метро": "light_metro",
+		"исключительно лёгкое метро": "light_metro",
+		
+		# Электрички и поезда
+		"электричка": "suburban_train",
+		"пригородный поезд": "suburban_train",
+		"только электричка": "suburban_train",
+		"исключительно электричка": "suburban_train",
+		"только пригородный поезд": "suburban_train",
+		"исключительно пригородный поезд": "suburban_train",
+		
+		# Аэроэкспресс
+		"аэроэкспресс": "aeroexpress",
+		"аэро экспресс": "aeroexpress",
+		"только аэроэкспресс": "aeroexpress",
+		"только аэро экспресс": "aeroexpress",
+		"исключительно аэроэкспресс": "aeroexpress",
+		"исключительно аэро экспресс": "aeroexpress",
+		
+		# Трамвай
+		"трамвай": "tram",
+		"только трамвай": "tram",
+		"исключительно трамвай": "tram",
+		
+		# Автобус
+		"автобус": "bus",
+		"только автобус": "bus",
+		"только автобусы": "bus",
+		"исключительно автобус": "bus",
+		"исключительно автобусы": "bus",
+		
+		# Троллейбус
+		"троллейбус": "trolleybus",
+		"только троллейбус": "trolleybus",
+		"исключительно троллейбус": "trolleybus",
+		
+		# Маршрутки
+		"маршрутка": "shuttle_bus",
+		"маршрутки": "shuttle_bus",
+		"только маршрутка": "shuttle_bus",
+		"только маршрутки": "shuttle_bus",
+		"исключительно маршрутка": "shuttle_bus",
+		"исключительно маршрутки": "shuttle_bus",
+		
+		# Монорельс
+		"монорельс": "monorail",
+		"монорель": "monorail",
+		"только монорельс": "monorail",
+		"только монорель": "monorail",
+		"исключительно монорельс": "monorail",
+		"исключительно монорель": "monorail",
+		
+		# Фуникулер
+		"фуникулер": "funicular_railway",
+		"только фуникулер": "funicular_railway",
+		"исключительно фуникулер": "funicular_railway",
+		
+		# Речной транспорт
+		"речной транспорт": "river_transport",
+		"речной трамвай": "river_transport",
+		"только речной транспорт": "river_transport",
+		"исключительно речной транспорт": "river_transport",
+		"только речной трамвай": "river_transport",
+		"исключительно речной трамвай": "river_transport",
+		
+		# Канатная дорога
+		"канатная дорога": "cable_car",
+		"только канатная дорога": "cable_car",
+		"исключительно канатная дорога": "cable_car",
+		
+		# Легкое железнодорожное сообщение
+		"легкое железнодорожное сообщение": "light_rail",
+		"лёгкое железнодорожное сообщение": "light_rail",
+		"только легкое железнодорожное сообщение": "light_rail",
+		"только лёгкое железнодорожное сообщение": "light_rail",
+		"исключительно легкое железнодорожное сообщение": "light_rail",
+		"исключительно лёгкое железнодорожное сообщение": "light_rail",
+		
+		# Предметро
+		"предметро": "premetro",
+		"только предметро": "premetro",
+		"исключительно предметро": "premetro",
+		
+		# МЦК и МЦД
+		"мцк": "mcc",
+		"мцд": "mcd",
+		"только мцк": "mcc",
+		"только мцд": "mcd",
+		"исключительно мцк": "mcc",
+		"исключительно мцд": "mcd",
+		
+		# Общие категории
+		"общественный транспорт": "public_transport",
+		"только общественный транспорт": "public_transport",
+		"исключительно общественный транспорт": "public_transport",
+		"наземный транспорт": "ground_transport_only",
+		"только наземный транспорт": "ground_transport_only",
+		"исключительно наземный транспорт": "ground_transport_only",
+	}
+	
+	# Маппинг русских названий транспорта на типы Routing API
+	# Поддерживаем ВСЕ категории: "driving" "walking" "taxi" "bicycle" "scooter" "emergency" "truck" "motorcycle"
+	ROUTING_API_MAPPING = {
+		# Пешком
+		"пешком": "walking",
+		"пешая прогулка": "walking",
+		"только пешком": "walking",
+		"исключительно пешком": "walking",
+		
+		# Такси
+		"такси": "taxi",
+		"только такси": "taxi",
+		"исключительно такси": "taxi",
+		"такси_only": "taxi",
+		
+		# Автомобиль
+		"автомобиль": "driving",
+		"машина": "driving",
+		"на машине": "driving",
+		"только автомобиль": "driving",
+		"только машина": "driving",
+		"исключительно автомобиль": "driving",
+		"исключительно машина": "driving",
+		"car_only": "driving",
+		
+		# Велосипед
+		"велосипед": "bicycle",
+		"на велосипеде": "bicycle",
+		"только велосипед": "bicycle",
+		"исключительно велосипед": "bicycle",
+		
+		# Самокат
+		"самокат": "scooter",
+		"на самокате": "scooter",
+		"только самокат": "scooter",
+		"исключительно самокат": "scooter",
+		
+		# Экстренные службы
+		"скорая помощь": "emergency",
+		"пожарная": "emergency",
+		"полиция": "emergency",
+		"экстренные службы": "emergency",
+		"только скорая помощь": "emergency",
+		"только пожарная": "emergency",
+		"только полиция": "emergency",
+		"исключительно скорая помощь": "emergency",
+		"исключительно пожарная": "emergency",
+		"исключительно полиция": "emergency",
+		
+		# Грузовик
+		"грузовик": "truck",
+		"только грузовик": "truck",
+		"исключительно грузовик": "truck",
+		
+		# Мотоцикл
+		"мотоцикл": "motorcycle",
+		"только мотоцикл": "motorcycle",
+		"исключительно мотоцикл": "motorcycle",
+	}
+	
 	def __init__(
 		self,
 		api_key: Optional[str] = None,
@@ -297,7 +492,8 @@ class MapAssistant:
 			self._llm = ChatGroq(
 				api_key=groq_key,
 				model=model,
-				temperature=temperature
+				temperature=temperature,
+                reasoning_format="hidden"
 			)
 		except Exception as e:
 			# Fallback: try with even more minimal parameters
@@ -316,73 +512,84 @@ class MapAssistant:
 		self.places_url = "https://catalog.api.2gis.com/3.0/items"
 		self.geocoder_url = "https://catalog.api.2gis.com/3.0/items/geocode"
 		self.regions_url = "https://catalog.api.2gis.com/2.0/region/search"
-		self.routing_url = "https://routing.api.2gis.com/routing/7.0"
-		self.public_transport_url = "https://routing.api.2gis.com/public_transport/2.0"
+		self.routing_url = "https://routing.api.2gis.com/routing/7.0.0/global"
+		self.public_transport_url = f"https://routing.api.2gis.com/public_transport/2.0"
 		
 		# Region settings
 		self.region_name = os.getenv("DGIS_REGION_NAME", "Москва")  # Default to Moscow
 		self.region_id = None  # Will be fetched from Regions API
 		
-		# System prompt for map assistant
+		# Initialize system prompt
 		self._system_prompt = self._build_map_system_prompt()
+	
+	def _normalize_transport_preference(self, transport_preference: str) -> str:
+		"""Normalize transport preference using explicit mappings."""
+		if not transport_preference:
+			return "any"
+		
+		# Convert to lowercase for case-insensitive matching
+		preference_lower = transport_preference.lower().strip()
+		
+		# Check Public Transport API mappings first
+		if preference_lower in self.PUBLIC_TRANSPORT_MAPPING:
+			mapped_type = self.PUBLIC_TRANSPORT_MAPPING[preference_lower]
+			logger.info(f"🔄 TRANSPORT MAPPING: '{transport_preference}' -> Public Transport API: '{mapped_type}'")
+			return mapped_type
+		
+		# Check Routing API mappings
+		if preference_lower in self.ROUTING_API_MAPPING:
+			mapped_type = self.ROUTING_API_MAPPING[preference_lower]
+			logger.info(f"🔄 TRANSPORT MAPPING: '{transport_preference}' -> Routing API: '{mapped_type}'")
+			return mapped_type
+		
+		# Return original if no mapping found
+		logger.info(f"🔄 TRANSPORT MAPPING: '{transport_preference}' -> No mapping found, using as-is")
+		return transport_preference
 	
 	def _build_map_system_prompt(self) -> str:
 		"""Build system prompt for map assistant."""
-		return """Ты - умный ассистент по планированию маршрутов. Твоя задача - анализировать запросы пользователей и извлекать информацию о маршрутах.
+		return """Ты - ассистент по планированию маршрутов. Анализируй запросы и извлекай информацию о маршрутах.
 
-ВАЖНО: Всегда старайся определить точку отправления, даже если она не указана явно. Используй контекст и здравый смысл.
-
-Ты должен понимать запросы на естественном языке и извлекать:
-1. Точку отправления (откуда) - ОБЯЗАТЕЛЬНО попытайся определить
+ИЗВЛЕКАЙ:
+1. Точку отправления (откуда)
 2. Точку назначения (куда) 
-3. Промежуточные точки (waypoints) - места, куда пользователь хочет зайти по дороге
-4. Тип мест (кафе, аптека, магазин и т.д.)
-5. Предпочтения транспорта (такси, общественный транспорт, пешком, максимально быстро и т.д.)
-
-Примеры запросов и извлечения:
-- "Хочу построить маршрут от Красной площади до Тверской улицы" 
-  → start_point: "Красная площадь", end_point: "Тверская улица", transport_preference: "any"
-- "По дороге зайти в кафе Starbucks"
-  → waypoint: {"name": "Starbucks", "type": "кафе"}
-- "Доехать до офиса 2ГИС на Даниловской набережной"
-  → end_point: "офис 2ГИС на Даниловской набережной" (start_point может быть "текущее местоположение")
-- "Выйду на станции метро Бульвар Дмитрия Донского"
-  → waypoint: {"name": "Бульвар Дмитрия Донского", "type": "станция метро"}
-- "По дороге хочу где-нибудь поесть в фастфуде у станции метро"
-  → waypoint: {"name": "фастфуд", "type": "фастфуд", "description": "рядом с метро"}
-- "Встретиться с другом, хотим где-нибудь поесть в фастфуде у станции метро Бульвар Дмитрия Донского"
-  → waypoint: {"name": "фастфуд", "type": "фастфуд", "description": "у станции метро Бульвар Дмитрия Донского"}
-- "Хочу только такси до аэропорта"
-  → transport_preference: "taxi_only", end_point: "аэропорт"
-- "Добраться максимально быстро до центра"
-  → transport_preference: "fastest", end_point: "центр"
-- "Только наземный транспорт, без метро"
-  → transport_preference: "ground_transport_only"
-- "Пешком через парк"
-  → transport_preference: "walking", route_preference: "через парк"
-
-Твоя задача - вернуть JSON с извлеченной информацией:
-{
-  "start_point": "описание точки отправления (попытайся определить даже если не указано)",
-  "end_point": "описание точки назначения", 
-  "waypoints": [
-    {
-      "name": "название места (без лишних слов)",
-      "type": "тип места (кафе, станция метро, ресторан и т.д.)",
-      "description": "дополнительное описание"
-    }
-  ],
-  "transport_preference": "предпочтение транспорта (any, taxi_only, public_transport, walking, fastest, ground_transport_only, metro_only, bus_only, tram_only, trolleybus_only, suburban_train_only)",
-  "route_preference": "предпочтение маршрута (быстро, короткий, через парк, избегать платных дорог, избегать пробок, через центр, статистика пробок, время отправления: в 15:30, через час, завтра и т.д.)"
-}
+3. Промежуточные точки (waypoints)
+4. Предпочтения транспорта
 
 ПРАВИЛА:
-- Если точка отправления не указана, попробуй определить из контекста или используй "текущее местоположение"
-- Для станций метро используй только название станции без "станция метро"
-- Для типов мест используй простые термины: "кафе", "ресторан", "станция метро", "аптека"
-- Для transport_preference используй: "any", "taxi_only", "public_transport", "walking", "fastest", "ground_transport_only", "metro_only", "bus_only", "tram_only", "trolleybus_only", "suburban_train_only"
-- Для route_preference извлекай: "быстро" (fastest), "короткий" (shortest), "через парк", "избегать платных дорог", "избегать пробок", "статистика пробок", "через центр", время отправления ("в 15:30", "через час", "завтра")
-- Будь точным в извлечении информации"""
+- Если точка отправления не указана, используй "текущее местоположение"
+- Для transport_preference: "any", "taxi_only", "car_only", "public_transport", "walking", "fastest", "ground_transport_only", "только метро", "только автобусы", "только трамвай", "только троллейбус", "только электричка"
+- Если разные виды транспорта для разных частей маршрута - разбей на этапы
+- Слово "обратно" означает возвращение к предыдущей точке отправления
+
+ФОРМАТ ОТВЕТА (только JSON, без объяснений):
+
+ПРОСТОЙ МАРШРУТ:
+{
+  "start_point": "точка отправления",
+  "end_point": "точка назначения", 
+  "waypoints": [{"name": "название", "type": "тип", "description": "описание"}],
+  "transport_preference": "предпочтение транспорта",
+  "route_preference": "предпочтение маршрута"
+}
+
+МНОГОЭТАПНЫЙ МАРШРУТ:
+{
+  "is_multi_stage": true,
+  "stages": [
+    {
+      "stage_id": "stage_1",
+      "start_point": "точка отправления",
+      "end_point": "точка назначения",
+      "waypoints": [...],
+      "transport_preference": "предпочтение транспорта",
+      "route_preference": "предпочтение маршрута",
+      "description": "описание этапа"
+    }
+  ]
+}
+
+ВАЖНО: Отвечай только JSON, не более 500 символов. Не зацикливайся!"""
 	
 	async def _geocode_address(self, address: str) -> Optional[Tuple[float, float, str]]:
 		"""Geocode an address using 2GIS Geocoder API.
@@ -696,36 +903,74 @@ class MapAssistant:
 		logger.info(f"🚗 ROUTING REQUEST: Transport preference: {transport_preference}")
 		logger.info(f"🚗 ROUTING REQUEST: Route preference: {route_preference}")
 		
+		# Normalize transport preference using explicit mappings
+		normalized_preference = self._normalize_transport_preference(transport_preference)
+		logger.info(f"🔄 ROUTING REQUEST: Normalized transport preference: {normalized_preference}")
+		
 		routes = []
 		
-		# Determine which APIs to use based on transport preference
-		if transport_preference == "walking":
+		# Determine which APIs to use based on normalized transport preference
+		if normalized_preference == "walking":
 			routes.extend(await self._get_walking_routes(start_point, end_point, waypoints, route_preference))
-		elif transport_preference == "taxi_only":
+		elif normalized_preference == "taxi":
 			routes.extend(await self._get_taxi_routes(start_point, end_point, waypoints, route_preference))
-		elif transport_preference in ["public_transport", "metro_only", "bus_only", "tram_only", "trolleybus_only", "suburban_train_only"]:
+		elif normalized_preference == "driving":
+			routes.extend(await self._get_car_routes(start_point, end_point, waypoints, route_preference))
+		elif normalized_preference in ["pedestrian", "metro", "light_metro", "suburban_train", "aeroexpress", 
+									  "tram", "bus", "trolleybus", "shuttle_bus", "monorail", 
+									  "funicular_railway", "river_transport", "cable_car", "light_rail", 
+									  "premetro", "mcc", "mcd", "public_transport", "ground_transport_only"]:
 			start_time = self._parse_time_preference(route_preference)
-			routes.extend(await self._get_public_transport_routes(start_point, end_point, waypoints, transport_preference, start_time))
-		elif transport_preference == "ground_transport_only":
-			start_time = self._parse_time_preference(route_preference)
-			routes.extend(await self._get_ground_transport_routes(start_point, end_point, waypoints, transport_preference, start_time))
-		elif transport_preference == "fastest":
+			routes = await self._get_public_transport_routes(start_point, end_point, waypoints, normalized_preference, start_time)
+			
+			# If no routes found, try fallback with all transport types
+			if not routes:
+				logger.info(f"🔄 PUBLIC TRANSPORT FALLBACK: No routes found for '{normalized_preference}', trying all transport types")
+				routes = await self._get_public_transport_fallback_routes(start_point, end_point, waypoints, start_time)
+				if routes:
+					# Add fallback message to routes
+					for route in routes:
+						route.summary = f"⚠️ {route.summary} (альтернативный маршрут - запрошенный транспорт недоступен)"
+		elif normalized_preference in ["bicycle", "scooter", "emergency", "truck", "motorcycle"]:
+			# These are Routing API types - all implemented
+			if normalized_preference == "scooter":
+				routes = await self._get_scooter_routes(start_point, end_point, waypoints, route_preference)
+			elif normalized_preference == "bicycle":
+				routes = await self._get_bicycle_routes(start_point, end_point, waypoints, route_preference)
+			elif normalized_preference == "emergency":
+				routes = await self._get_emergency_routes(start_point, end_point, waypoints, route_preference)
+			elif normalized_preference == "truck":
+				routes = await self._get_truck_routes(start_point, end_point, waypoints, route_preference)
+			elif normalized_preference == "motorcycle":
+				routes = await self._get_motorcycle_routes(start_point, end_point, waypoints, route_preference)
+			
+			# If no routes found, fallback to taxi
+			if not routes:
+				logger.info(f"🔄 ROUTING API FALLBACK: No routes found for '{normalized_preference}', falling back to taxi")
+				routes = await self._get_taxi_routes(start_point, end_point, waypoints, route_preference)
+				if routes:
+					# Add fallback message to routes
+					for route in routes:
+						route.summary = f"⚠️ {route.summary} (альтернативный маршрут на такси - запрошенный транспорт недоступен)"
+		elif normalized_preference == "fastest":
 			# Get all options and choose fastest
 			all_routes = []
 			start_time = self._parse_time_preference(route_preference)
 			all_routes.extend(await self._get_taxi_routes(start_point, end_point, waypoints, route_preference))
+			all_routes.extend(await self._get_car_routes(start_point, end_point, waypoints, route_preference))
 			all_routes.extend(await self._get_public_transport_routes(start_point, end_point, waypoints, "public_transport", start_time))
 			# Sort by duration and take fastest
 			all_routes.sort(key=lambda r: r.total_duration)
 			routes = all_routes[:3]  # Top 3 fastest
-		else:  # "any"
+		else:  # "any" or unknown
 			# Get multiple options
 			start_time = self._parse_time_preference(route_preference)
 			routes.extend(await self._get_taxi_routes(start_point, end_point, waypoints, route_preference))
 			routes.extend(await self._get_public_transport_routes(start_point, end_point, waypoints, "public_transport", start_time))
 		
 		logger.info(f"✅ ROUTING SUCCESS: Found {len(routes)} route options")
-		return routes
+		# Return only the first route to keep response size manageable
+		return routes[:1] if routes else []
 	
 	async def _get_taxi_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 							   waypoints: List[RoutePoint] = None, 
@@ -733,45 +978,344 @@ class MapAssistant:
 		"""Get taxi routes using 2GIS Routing API."""
 		logger.info(f"🚕 TAXI ROUTING: Getting taxi routes")
 		
-		# Build request payload
+		# For taxi, we need to create separate routes for each segment
+		# if there are waypoints, we'll create multiple taxi routes
+		if waypoints:
+			# Create route from start to first waypoint
+			segments = []
+			current_start = start_point
+			
+			for waypoint in waypoints:
+				segment_payload = {
+					"points": [
+						{
+							"lat": current_start.latitude,
+							"lon": current_start.longitude
+						},
+						{
+							"lat": waypoint.latitude,
+							"lon": waypoint.longitude
+						}
+					],
+					"transport": "taxi",
+					"output": "detailed",
+					"locale": "ru"
+				}
+				
+				# Add routing parameters based on preferences
+				routing_params = self._build_routing_params(route_preference)
+				if routing_params:
+					segment_payload.update(routing_params)
+				
+				segment_routes = await self._make_routing_request(segment_payload, "taxi")
+				segments.extend(segment_routes)
+				current_start = waypoint
+			
+			# Create final segment from last waypoint to end
+			final_payload = {
+				"points": [
+					{
+						"lat": current_start.latitude,
+						"lon": current_start.longitude
+					},
+					{
+						"lat": end_point.latitude,
+						"lon": end_point.longitude
+					}
+				],
+				"transport": "taxi",
+				"output": "detailed",
+				"locale": "ru"
+			}
+			
+			# Add routing parameters based on preferences
+			routing_params = self._build_routing_params(route_preference)
+			if routing_params:
+				final_payload.update(routing_params)
+			
+			final_routes = await self._make_routing_request(final_payload, "taxi")
+			segments.extend(final_routes)
+			
+			return segments
+		else:
+			# Simple route without waypoints
+			payload = {
+				"points": [
+					{
+						"lat": start_point.latitude,
+						"lon": start_point.longitude
+					},
+					{
+						"lat": end_point.latitude,
+						"lon": end_point.longitude
+					}
+				],
+				"transport": "taxi",
+				"output": "detailed",
+				"locale": "ru"
+			}
+			
+			# Add routing parameters based on preferences
+			routing_params = self._build_routing_params(route_preference)
+			if routing_params:
+				payload.update(routing_params)
+			
+			return await self._make_routing_request(payload, "taxi")
+	
+	async def _get_car_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+							  waypoints: List[RoutePoint] = None, 
+							  route_preference: str = None) -> List[Route]:
+		"""Get car routes using 2GIS Routing API."""
+		logger.info(f"🚗 CAR ROUTING: Getting car routes")
+		
+		# For car, we can use multiple points in a single request
 		payload = {
-			"locale": "ru",
-			"source": {
-				"name": start_point.name,
-				"point": {
+			"points": [
+				{
 					"lat": start_point.latitude,
 					"lon": start_point.longitude
 				}
-			},
-			"target": {
-				"name": end_point.name,
-				"point": {
-					"lat": end_point.latitude,
-					"lon": end_point.longitude
-				}
-			},
-			"transport": ["taxi"]
+			],
+			"transport": "car",
+			"output": "detailed",
+			"locale": "ru"
 		}
-		
-		# Add routing parameters based on preferences
-		params = self._build_routing_params(route_preference)
-		if params:
-			payload["params"] = params
 		
 		# Add waypoints if provided
 		if waypoints:
-			payload["intermediate_points"] = [
-				{
-					"name": wp.name,
-					"point": {
-						"lat": wp.latitude,
-						"lon": wp.longitude
-					}
-				}
-				for wp in waypoints
-			]
+			for wp in waypoints:
+				payload["points"].append({
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
 		
-		return await self._make_routing_request(payload, "taxi")
+		# Add end point
+		payload["points"].append({
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "car")
+	
+	async def _get_scooter_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+								  waypoints: List[RoutePoint] = None, 
+								  route_preference: str = None) -> List[Route]:
+		"""Get scooter routes using 2GIS Routing API."""
+		logger.info(f"🛴 SCOOTER ROUTING: Getting scooter routes")
+		
+		# For scooter, we can use multiple points in a single request
+		payload = {
+			"points": [
+				{
+					"type": "stop",
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			],
+			"transport": "scooter",
+			"output": "detailed",
+			"locale": "ru"
+		}
+		
+		# Add waypoints if provided
+		if waypoints:
+			for wp in waypoints:
+				payload["points"].append({
+					"type": "stop",
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
+		
+		# Add end point
+		payload["points"].append({
+			"type": "stop", 
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "scooter")
+	
+	async def _get_bicycle_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+								  waypoints: List[RoutePoint] = None, 
+								  route_preference: str = None) -> List[Route]:
+		"""Get bicycle routes using 2GIS Routing API."""
+		logger.info(f"🚴 BICYCLE ROUTING: Getting bicycle routes")
+		
+		# For bicycle, we can use multiple points in a single request
+		payload = {
+			"points": [
+				{
+					"type": "stop",
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			],
+			"transport": "bicycle",
+			"output": "detailed",
+			"locale": "ru"
+		}
+		
+		# Add waypoints if provided
+		if waypoints:
+			for wp in waypoints:
+				payload["points"].append({
+					"type": "stop",
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
+		
+		# Add end point
+		payload["points"].append({
+			"type": "stop", 
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "bicycle")
+	
+	async def _get_emergency_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+									waypoints: List[RoutePoint] = None, 
+									route_preference: str = None) -> List[Route]:
+		"""Get emergency routes using 2GIS Routing API."""
+		logger.info(f"🚨 EMERGENCY ROUTING: Getting emergency routes")
+		
+		# For emergency, we can use multiple points in a single request
+		payload = {
+			"points": [
+				{
+					"type": "stop",
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			],
+			"transport": "emergency",
+			"output": "detailed",
+			"locale": "ru"
+		}
+		
+		# Add waypoints if provided
+		if waypoints:
+			for wp in waypoints:
+				payload["points"].append({
+					"type": "stop",
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
+		
+		# Add end point
+		payload["points"].append({
+			"type": "stop", 
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "emergency")
+	
+	async def _get_truck_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+								waypoints: List[RoutePoint] = None, 
+								route_preference: str = None) -> List[Route]:
+		"""Get truck routes using 2GIS Routing API."""
+		logger.info(f"🚛 TRUCK ROUTING: Getting truck routes")
+		
+		# For truck, we can use multiple points in a single request
+		payload = {
+			"points": [
+				{
+					"type": "stop",
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			],
+			"transport": "truck",
+			"output": "detailed",
+			"locale": "ru"
+		}
+		
+		# Add waypoints if provided
+		if waypoints:
+			for wp in waypoints:
+				payload["points"].append({
+					"type": "stop",
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
+		
+		# Add end point
+		payload["points"].append({
+			"type": "stop", 
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "truck")
+	
+	async def _get_motorcycle_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+									 waypoints: List[RoutePoint] = None, 
+									 route_preference: str = None) -> List[Route]:
+		"""Get motorcycle routes using 2GIS Routing API."""
+		logger.info(f"🏍️ MOTORCYCLE ROUTING: Getting motorcycle routes")
+		
+		# For motorcycle, we can use multiple points in a single request
+		payload = {
+			"points": [
+				{
+					"type": "stop",
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			],
+			"transport": "motorcycle",
+			"output": "detailed",
+			"locale": "ru"
+		}
+		
+		# Add waypoints if provided
+		if waypoints:
+			for wp in waypoints:
+				payload["points"].append({
+					"type": "stop",
+					"lat": wp.latitude,
+					"lon": wp.longitude
+				})
+		
+		# Add end point
+		payload["points"].append({
+			"type": "stop", 
+			"lat": end_point.latitude,
+			"lon": end_point.longitude
+		})
+		
+		# Add routing parameters based on preferences
+		routing_params = self._build_routing_params(route_preference)
+		if routing_params:
+			payload.update(routing_params)
+		
+		return await self._make_routing_request(payload, "motorcycle")
 	
 	async def _get_public_transport_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 										   waypoints: List[RoutePoint] = None,
@@ -785,7 +1329,7 @@ class MapAssistant:
 		# Determine transport types based on preference
 		transport_types = self._get_transport_types(transport_preference)
 		
-		# Build request payload
+		# Build request payload according to 2GIS Public Transport API documentation
 		payload = {
 			"locale": "ru",
 			"source": {
@@ -824,15 +1368,13 @@ class MapAssistant:
 		
 		return await self._make_public_transport_request(payload)
 	
-	async def _get_ground_transport_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
-										   waypoints: List[RoutePoint] = None,
-										   transport_preference: str = None,
-										   start_time: int = None) -> List[Route]:
-		"""Get ground transport routes (excluding metro)."""
-		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Getting ground transport routes")
-		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Transport preference: {transport_preference}")
-		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Start time: {start_time}")
+	async def _get_public_transport_fallback_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+												   waypoints: List[RoutePoint] = None,
+												   start_time: int = None) -> List[Route]:
+		"""Get fallback public transport routes with all transport types."""
+		logger.info(f"🚌 PUBLIC TRANSPORT FALLBACK: Trying all transport types")
 		
+		# Try with all transport types for fastest/shortest route
 		payload = {
 			"locale": "ru",
 			"source": {
@@ -849,13 +1391,62 @@ class MapAssistant:
 					"lon": end_point.longitude
 				}
 			},
-			"transport": ["bus", "tram", "shuttle_bus"]  # Exclude metro
+			"transport": ["metro", "bus", "tram", "trolleybus", "shuttle_bus"]  # Most common types
 		}
 		
 		# Add start time if provided
 		if start_time:
 			payload["start_time"] = start_time
 		
+		# Add waypoints if provided
+		if waypoints:
+			payload["intermediate_points"] = [
+				{
+					"name": wp.name,
+					"point": {
+						"lat": wp.latitude,
+						"lon": wp.longitude
+					}
+				}
+				for wp in waypoints
+			]
+		
+		return await self._make_public_transport_request(payload)
+	
+	async def _get_ground_transport_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
+										   waypoints: List[RoutePoint] = None,
+										   transport_preference: str = None,
+										   start_time: int = None) -> List[Route]:
+		"""Get ground transport routes (excluding metro) using 2GIS Public Transport API."""
+		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Getting ground transport routes")
+		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Transport preference: {transport_preference}")
+		logger.info(f"🚌 GROUND TRANSPORT ROUTING: Start time: {start_time}")
+		
+		# Build request payload according to 2GIS Public Transport API documentation
+		payload = {
+			"locale": "ru",
+			"source": {
+				"name": start_point.name,
+				"point": {
+					"lat": start_point.latitude,
+					"lon": start_point.longitude
+				}
+			},
+			"target": {
+				"name": end_point.name,
+				"point": {
+					"lat": end_point.latitude,
+					"lon": end_point.longitude
+				}
+			},
+			"transport": ["bus", "tram", "trolleybus", "shuttle_bus"]  # Exclude metro
+		}
+		
+		# Add start time if provided
+		if start_time:
+			payload["start_time"] = start_time
+		
+		# Add waypoints if provided
 		if waypoints:
 			payload["intermediate_points"] = [
 				{
@@ -877,22 +1468,19 @@ class MapAssistant:
 		logger.info(f"🚶 WALKING ROUTING: Getting walking routes")
 		
 		payload = {
-			"locale": "ru",
-			"source": {
-				"name": start_point.name,
-				"point": {
+			"points": [
+				{
 					"lat": start_point.latitude,
 					"lon": start_point.longitude
-				}
-			},
-			"target": {
-				"name": end_point.name,
-				"point": {
+				},
+				{
 					"lat": end_point.latitude,
 					"lon": end_point.longitude
 				}
-			},
-			"transport": ["walking"]
+			],
+			"transport": "pedestrian",
+			"output": "detailed",
+			"locale": "ru"
 		}
 		
 		# Add pedestrian-specific parameters
@@ -901,16 +1489,16 @@ class MapAssistant:
 			payload["params"] = params
 		
 		if waypoints:
-			payload["intermediate_points"] = [
+			# Insert waypoints between start and end points
+			waypoint_points = [
 				{
-					"name": wp.name,
-					"point": {
-						"lat": wp.latitude,
-						"lon": wp.longitude
-					}
+					"lat": wp.latitude,
+					"lon": wp.longitude
 				}
 				for wp in waypoints
 			]
+			# Insert waypoints before the last point (end point)
+			payload["points"][-1:-1] = waypoint_points
 		
 		return await self._make_routing_request(payload, "walking")
 	
@@ -961,6 +1549,9 @@ class MapAssistant:
 						logger.info(f"📥 PUBLIC TRANSPORT API RESPONSE: Full data: {json.dumps(data, ensure_ascii=False, indent=2)}")
 						
 						return self._parse_public_transport_response(data)
+					elif response.status == 204:
+						logger.info(f"📥 PUBLIC TRANSPORT API RESPONSE: No routes found (204)")
+						return []  # Return empty list to trigger fallback
 					else:
 						error_text = await response.text()
 						logger.error(f"❌ PUBLIC TRANSPORT API ERROR: HTTP {response.status}")
@@ -971,16 +1562,43 @@ class MapAssistant:
 		return []
 	
 	def _parse_routing_response(self, data: Dict[str, Any], transport_type: str) -> List[Route]:
-		"""Parse routing API response."""
+		"""Parse routing API response - return raw data without mapping."""
 		routes = []
 		
-		if isinstance(data, list):
-			for i, route_data in enumerate(data):
-				route = self._parse_single_route(route_data, f"{transport_type}_{i+1}")
-				if route:
+		# Check if response has result field (successful response)
+		if data.get("status") == "OK" and "result" in data:
+			result_data = data["result"]
+			
+			if isinstance(result_data, list):
+				for i, route_data in enumerate(result_data):
+					# Create a simple route object with raw data
+					route = Route(
+						route_id=f"{transport_type}_{i+1}",
+						total_distance=route_data.get("total_distance", 0),
+						total_duration=route_data.get("total_duration", 0),
+						transfer_count=0,  # Not applicable for routing API
+						transport_types=[transport_type],
+						segments=[],  # We'll include raw data instead
+						summary=f"Маршрут {transport_type}: {route_data.get('ui_total_duration', 'N/A')}, {route_data.get('ui_total_distance', {}).get('value', 'N/A')} {route_data.get('ui_total_distance', {}).get('unit', 'км')}",
+						raw_data=route_data  # Include full raw data
+					)
 					routes.append(route)
+			else:
+				# Single route result
+				route = Route(
+					route_id=f"{transport_type}_1",
+					total_distance=result_data.get("total_distance", 0),
+					total_duration=result_data.get("total_duration", 0),
+					transfer_count=0,
+					transport_types=[transport_type],
+					segments=[],
+					summary=f"Маршрут {transport_type}: {result_data.get('ui_total_duration', 'N/A')}, {result_data.get('ui_total_distance', {}).get('value', 'N/A')} {result_data.get('ui_total_distance', {}).get('unit', 'км')}",
+					raw_data=result_data
+				)
+				routes.append(route)
 		
-		return routes
+		# Return only the first route to keep response size manageable
+		return routes[:1] if routes else []
 	
 	def _parse_public_transport_response(self, data: List[Dict[str, Any]]) -> List[Route]:
 		"""Parse public transport API response - simplified version."""
@@ -1036,7 +1654,8 @@ class MapAssistant:
 			)
 			routes.append(route)
 		
-		return routes
+		# Return only the first route to keep response size manageable
+		return routes[:1] if routes else []
 	
 	def _parse_single_route(self, route_data: Dict[str, Any], route_id: str) -> Optional[Route]:
 		"""Parse a single route from API response."""
@@ -1202,39 +1821,51 @@ class MapAssistant:
 		return params if params else None
 	
 	def _get_transport_types(self, transport_preference: str = None) -> List[str]:
-		"""Get transport types based on user preference."""
-		# Default transport types
-		default_transports = [
-			"metro", "bus", "tram", "trolleybus", "shuttle_bus",
-			"suburban_train", "aeroexpress", "light_metro", "monorail",
-			"funicular_railway", "river_transport", "cable_car",
-			"light_rail", "premetro", "mcc", "mcd"
-		]
-		
+		"""Get transport types based on user preference (already normalized)."""
 		if not transport_preference:
 			return ["metro", "bus", "tram", "trolleybus", "shuttle_bus"]
 		
-		transport_preference = transport_preference.lower()
-		
-		# Specific transport type preferences
-		if "метро" in transport_preference or "metro" in transport_preference:
-			return ["metro", "light_metro", "premetro"]
-		elif "автобус" in transport_preference or "bus" in transport_preference:
-			return ["bus", "shuttle_bus"]
-		elif "трамвай" in transport_preference or "tram" in transport_preference:
-			return ["tram"]
-		elif "троллейбус" in transport_preference or "trolleybus" in transport_preference:
-			return ["trolleybus"]
-		elif "электричка" in transport_preference or "suburban" in transport_preference:
-			return ["suburban_train", "aeroexpress"]
-		elif "наземный" in transport_preference or "ground" in transport_preference:
-			return ["bus", "tram", "trolleybus", "shuttle_bus"]
-		elif "только метро" in transport_preference:
+		# transport_preference is already normalized, no need to normalize again
+		# Map normalized preferences to transport types
+		if transport_preference == "metro":
 			return ["metro"]
-		elif "без метро" in transport_preference or "наземный транспорт" in transport_preference:
+		elif transport_preference == "light_metro":
+			return ["light_metro"]
+		elif transport_preference == "tram":
+			return ["tram"]
+		elif transport_preference == "bus":
+			return ["bus"]
+		elif transport_preference == "trolleybus":
+			return ["trolleybus"]
+		elif transport_preference == "shuttle_bus":
+			return ["shuttle_bus"]
+		elif transport_preference == "suburban_train":
+			return ["suburban_train"]
+		elif transport_preference == "aeroexpress":
+			return ["aeroexpress"]
+		elif transport_preference == "monorail":
+			return ["monorail"]
+		elif transport_preference == "funicular_railway":
+			return ["funicular_railway"]
+		elif transport_preference == "river_transport":
+			return ["river_transport"]
+		elif transport_preference == "cable_car":
+			return ["cable_car"]
+		elif transport_preference == "light_rail":
+			return ["light_rail"]
+		elif transport_preference == "premetro":
+			return ["premetro"]
+		elif transport_preference == "mcc":
+			return ["mcc"]
+		elif transport_preference == "mcd":
+			return ["mcd"]
+		elif transport_preference == "ground_transport_only":
 			return ["bus", "tram", "trolleybus", "shuttle_bus"]
+		elif transport_preference == "public_transport":
+			return ["metro", "bus", "tram", "trolleybus", "shuttle_bus"]
 		else:
-			return default_transports
+			# Fallback to default
+			return ["metro", "bus", "tram", "trolleybus", "shuttle_bus"]
 	
 	def _parse_time_preference(self, route_preference: str = None) -> Optional[int]:
 		"""Parse time preference from route_preference string."""
@@ -1322,6 +1953,11 @@ class MapAssistant:
 			logger.info(f"📥 GROQ RESPONSE: Received response ({len(content)} chars)")
 			logger.info(f"📥 GROQ RESPONSE: Full response: {content}")
 			
+			# Check for looping/rambling response
+			if len(content) > 2000:
+				logger.warning(f"⚠️ GROQ WARNING: Response too long ({len(content)} chars), possible looping")
+				content = content[:2000] + "..."
+			
 			# Clean the response from LLM thinking tags and extra text
 			cleaned_content = self._clean_llm_response(content)
 			
@@ -1369,222 +2005,277 @@ class MapAssistant:
 				)
 			
 			logger.info(f"📝 MAP ASSISTANT: Step 2 - Processing parsed info: {parsed_info}")
-			points = []
-			friendly_text_parts = []
 			
-			# Process start point
-			if parsed_info.get("start_point"):
-				logger.info(f"📍 MAP ASSISTANT: Step 3a - Processing start point: {parsed_info['start_point']}")
-				coords = await self._geocode_address(parsed_info["start_point"])
-				if coords:
-					lat, lon, address = coords
-					points.append(RoutePoint(
-						name=parsed_info["start_point"],
-						latitude=lat,
-						longitude=lon,
-						point_type="start",
-						address=address
-					))
-					friendly_text_parts.append(f"📍 Точка отправления: {address}")
-					logger.info(f"✅ MAP ASSISTANT: Start point added: {address}")
-				else:
-					logger.warning(f"⚠️ MAP ASSISTANT: Start point not found: {parsed_info['start_point']}")
+			# Check if this is a multi-stage route
+			if parsed_info.get("is_multi_stage", False):
+				logger.info(f"🔄 MAP ASSISTANT: Multi-stage route detected, processing {len(parsed_info.get('stages', []))} stages")
+				return await self._process_multi_stage_route(parsed_info)
 			else:
-				logger.info(f"📍 MAP ASSISTANT: No start point specified, using current location")
-				# Add a placeholder start point
-				points.append(RoutePoint(
-					name="Текущее местоположение",
-					latitude=55.755814,  # Moscow center coordinates
-					longitude=37.617635,
-					point_type="start",
-					address="Текущее местоположение"
-				))
-				friendly_text_parts.append(f"📍 Точка отправления: Текущее местоположение")
-				logger.info(f"✅ MAP ASSISTANT: Start point added: Текущее местоположение")
-			
-			# Process waypoints
-			waypoints = parsed_info.get("waypoints", [])
-			logger.info(f"🛍️ MAP ASSISTANT: Step 3b - Processing {len(waypoints)} waypoints")
-			for i, waypoint in enumerate(waypoints):
-				if isinstance(waypoint, dict):
-					name = waypoint.get("name", "")
-					place_type = waypoint.get("type", "")
-					description = waypoint.get("description", "")
-					
-					logger.info(f"🛍️ MAP ASSISTANT: Processing waypoint {i+1}: {name} ({place_type}) - {description}")
-					
-					# Create contextual search query
-					context = None
-					if description:
-						context = description
-					
-					search_query = self._create_contextual_search_query(name, place_type, context)
-					logger.info(f"🔍 MAP ASSISTANT: Contextual search query: '{search_query}'")
-					places = await self._search_places(search_query)
-					
-					if places:
-						place = places[0]
-						point = place.get("point", {})
-						points.append(RoutePoint(
-							name=place.get("name", name),
-							latitude=float(point.get("lat", 0)),
-							longitude=float(point.get("lon", 0)),
-							point_type="waypoint",
-							description=waypoint.get("description"),
-							address=place.get("address_name")
-						))
-						friendly_text_parts.append(f"🛍️ По дороге: {place.get('name')} ({place.get('address_name', '')})")
-						logger.info(f"✅ MAP ASSISTANT: Waypoint {i+1} added: {place.get('name')}")
-					else:
-						# Try fallback search with simplified query
-						logger.info(f"🔄 MAP ASSISTANT: Trying fallback search for waypoint {i+1}")
-						fallback_query = self._create_fallback_query(name, place_type)
-						logger.info(f"🔄 MAP ASSISTANT: Fallback query: '{fallback_query}'")
-						fallback_places = await self._search_places(fallback_query)
-						
-						if fallback_places:
-							place = fallback_places[0]
-							point = place.get("point", {})
-							points.append(RoutePoint(
-								name=place.get("name", name),
-								latitude=float(point.get("lat", 0)),
-								longitude=float(point.get("lon", 0)),
-								point_type="waypoint",
-								description=waypoint.get("description"),
-								address=place.get("address_name")
-							))
-							friendly_text_parts.append(f"🛍️ По дороге: {place.get('name')} ({place.get('address_name', '')})")
-							logger.info(f"✅ MAP ASSISTANT: Waypoint {i+1} added via fallback: {place.get('name')}")
-						else:
-							# Try one more time with enhanced contextual search
-							logger.info(f"🔄 MAP ASSISTANT: Trying enhanced contextual search for waypoint {i+1}")
-							enhanced_query = self._create_enhanced_search_query(name, place_type, description)
-							logger.info(f"🔄 MAP ASSISTANT: Enhanced query: '{enhanced_query}'")
-							enhanced_places = await self._search_places(enhanced_query)
-							
-							if enhanced_places:
-								place = enhanced_places[0]
-								point = place.get("point", {})
-								points.append(RoutePoint(
-									name=place.get("name", name),
-									latitude=float(point.get("lat", 0)),
-									longitude=float(point.get("lon", 0)),
-									point_type="waypoint",
-									description=waypoint.get("description"),
-									address=place.get("address_name")
-								))
-								friendly_text_parts.append(f"🛍️ По дороге: {place.get('name')} ({place.get('address_name', '')})")
-								logger.info(f"✅ MAP ASSISTANT: Waypoint {i+1} added via enhanced search: {place.get('name')}")
-							else:
-								logger.warning(f"⚠️ MAP ASSISTANT: Waypoint {i+1} not found even with enhanced search: {name}")
-			
-			# Process end point
-			if parsed_info.get("end_point"):
-				logger.info(f"🎯 MAP ASSISTANT: Step 3c - Processing end point: {parsed_info['end_point']}")
-				coords = await self._geocode_address(parsed_info["end_point"])
-				if coords:
-					lat, lon, address = coords
-					points.append(RoutePoint(
-						name=parsed_info["end_point"],
-						latitude=lat,
-						longitude=lon,
-						point_type="end",
-						address=address
-					))
-					friendly_text_parts.append(f"🎯 Точка назначения: {address}")
-					logger.info(f"✅ MAP ASSISTANT: End point added: {address}")
-				else:
-					logger.warning(f"⚠️ MAP ASSISTANT: End point not found: {parsed_info['end_point']}")
-			
-			# Generate friendly response
-			logger.info(f"📝 MAP ASSISTANT: Step 4 - Generating response with {len(points)} points")
-			if points:
-				# Extract transport preference
-				transport_preference = parsed_info.get("transport_preference", "any")
-				route_preference = parsed_info.get("route_preference")
-				logger.info(f"🚗 MAP ASSISTANT: Step 5 - Building routes with transport preference: {transport_preference}")
-				logger.info(f"🚗 MAP ASSISTANT: Step 5 - Building routes with route preference: {route_preference}")
+				logger.info(f"📍 MAP ASSISTANT: Single-stage route detected")
+				return await self._process_single_stage_route(parsed_info)
 				
-				# Find start and end points
-				start_point = None
-				end_point = None
-				waypoints = []
-				
-				for point in points:
-					if point.point_type == "start":
-						start_point = point
-					elif point.point_type == "end":
-						end_point = point
-					elif point.point_type == "waypoint":
-						waypoints.append(point)
-				
-				# Build routes if we have start and end points
-				routes = []
-				if start_point and end_point:
-					logger.info(f"🚗 MAP ASSISTANT: Building routes from {start_point.name} to {end_point.name}")
-					routes = await self._get_routing_options(start_point, end_point, waypoints, transport_preference, route_preference)
-					logger.info(f"✅ MAP ASSISTANT: Built {len(routes)} route options")
-				
-				# Generate friendly text
-				friendly_text = f"✅ Маршрут построен!\n\n" + "\n".join(friendly_text_parts)
-				
-				if routes:
-					friendly_text += f"\n\n🚗 Доступные варианты маршрутов:\n"
-					for i, route in enumerate(routes[:3], 1):  # Show top 3 routes
-						friendly_text += f"{i}. {route.summary}\n"
-						if route.transport_types:
-							transport_names = {
-								"taxi": "🚕 Такси",
-								"bus": "🚌 Автобус", 
-								"metro": "🚇 Метро",
-								"tram": "🚋 Трамвай",
-								"shuttle_bus": "🚐 Маршрутка",
-								"walking": "🚶 Пешком"
-							}
-							transport_list = [transport_names.get(t, t) for t in route.transport_types]
-							friendly_text += f"   Транспорт: {', '.join(transport_list)}\n"
-				else:
-					transport_preference_text = {
-						"any": "любым транспортом",
-						"taxi_only": "только такси",
-						"public_transport": "общественным транспортом",
-						"walking": "пешком",
-						"fastest": "максимально быстро",
-						"ground_transport_only": "только наземным транспортом"
-					}
-					transport_text = transport_preference_text.get(transport_preference, "любым транспортом")
-					friendly_text += f"\n\n🚶‍♂️ Рекомендуемый способ передвижения: {transport_text}"
-				
-				if len(points) > 2:
-					friendly_text += f"\n\n💡 Совет: У вас {len(points)-2} промежуточных остановок. Учитывайте время на каждую остановку при планировании."
-				
-				logger.info(f"✅ MAP ASSISTANT: SUCCESS - Route completed with {len(points)} points and {len(routes)} route options")
-				logger.debug(f"✅ MAP ASSISTANT: Final response text: {friendly_text}")
-				
-				return EnhancedRouteResponse(
-					points=points,
-					routes=routes,
-					text=friendly_text,
-					success=True
-				)
-			else:
-				logger.error(f"❌ MAP ASSISTANT: FAILED - No valid points found")
-				return EnhancedRouteResponse(
-					points=[],
-					text="К сожалению, не удалось найти указанные места. Проверьте правильность названий.",
-					success=False,
-					error_message="No valid points found"
-				)
-		
 		except Exception as e:
-			logger.error(f"❌ MAP ASSISTANT: EXCEPTION - {str(e)}")
+			logger.error(f"❌ MAP ASSISTANT: Error processing route request: {e}")
 			return EnhancedRouteResponse(
 				points=[],
-				text="Произошла ошибка при обработке запроса. Попробуйте еще раз.",
+				text=f"Произошла ошибка при обработке запроса: {str(e)}",
 				success=False,
 				error_message=str(e)
 			)
 	
+	async def _process_multi_stage_route(self, parsed_info: Dict[str, Any]) -> EnhancedRouteResponse:
+		"""Process a multi-stage route with different transport preferences for each stage."""
+		logger.info(f"🔄 MAP ASSISTANT: Processing multi-stage route with {len(parsed_info.get('stages', []))} stages")
+		
+		stages = []
+		all_points = []
+		friendly_text_parts = []
+		last_end_point = None  # Track the last end point to reuse coordinates
+		
+		for i, stage_data in enumerate(parsed_info.get("stages", [])):
+			logger.info(f"🔄 MAP ASSISTANT: Processing stage {i+1}: {stage_data}")
+			
+			stage_id = stage_data.get("stage_id", f"stage_{i+1}")
+			start_point_desc = stage_data.get("start_point", "")
+			end_point_desc = stage_data.get("end_point", "")
+			waypoints_data = stage_data.get("waypoints", [])
+			transport_preference = stage_data.get("transport_preference", "any")
+			route_preference = stage_data.get("route_preference")
+			description = stage_data.get("description", "")
+			
+			# Process stage points
+			stage_points = []
+			
+			# Start point - reuse coordinates from previous stage if available
+			if start_point_desc:
+				# Check if this is the same as the last end point
+				if last_end_point and start_point_desc.lower() == last_end_point.name.lower():
+					logger.info(f"🔄 MAP ASSISTANT: Reusing coordinates from previous stage for start point: {start_point_desc}")
+					start_point = RoutePoint(
+						name=start_point_desc,
+						latitude=last_end_point.latitude,
+						longitude=last_end_point.longitude,
+						point_type="start",
+						address=last_end_point.address
+					)
+					stage_points.append(start_point)
+					all_points.append(start_point)
+				else:
+					# Make new geocoding request
+					coords = await self._geocode_address(start_point_desc)
+					if coords:
+						lat, lon, address = coords
+						start_point = RoutePoint(
+							name=start_point_desc,
+							latitude=lat,
+							longitude=lon,
+							point_type="start",
+							address=address
+						)
+						stage_points.append(start_point)
+						all_points.append(start_point)
+			
+			# Waypoints
+			for waypoint_data in waypoints_data:
+				if isinstance(waypoint_data, dict):
+					name = waypoint_data.get("name", "")
+					place_type = waypoint_data.get("type", "")
+					desc = waypoint_data.get("description", "")
+					
+					# Check if this waypoint matches the last end point
+					if last_end_point and name.lower() == last_end_point.name.lower():
+						logger.info(f"🔄 MAP ASSISTANT: Reusing coordinates from previous stage for waypoint: {name}")
+						waypoint = RoutePoint(
+							name=name,
+							latitude=last_end_point.latitude,
+							longitude=last_end_point.longitude,
+							point_type="waypoint",
+							description=desc,
+							address=last_end_point.address
+						)
+						stage_points.append(waypoint)
+						all_points.append(waypoint)
+					else:
+						# Make new search request
+						search_query = self._create_contextual_search_query(name, place_type, desc)
+						places = await self._search_places(search_query)
+						
+						if places:
+							place = places[0]
+							point = place.get("point", {})
+							waypoint = RoutePoint(
+								name=place.get("name", name),
+								latitude=float(point.get("lat", 0)),
+								longitude=float(point.get("lon", 0)),
+								point_type="waypoint",
+								description=desc,
+								address=place.get("address_name")
+							)
+							stage_points.append(waypoint)
+							all_points.append(waypoint)
+			
+			# End point
+			if end_point_desc:
+				coords = await self._geocode_address(end_point_desc)
+				if coords:
+					lat, lon, address = coords
+					end_point = RoutePoint(
+						name=end_point_desc,
+						latitude=lat,
+						longitude=lon,
+						point_type="end",
+						address=address
+					)
+					stage_points.append(end_point)
+					all_points.append(end_point)
+			
+			# Build routes for this stage
+			stage_routes = []
+			if len(stage_points) >= 2:
+				stage_start = stage_points[0]
+				stage_end = stage_points[-1]
+				stage_waypoints = stage_points[1:-1] if len(stage_points) > 2 else []
+				
+				stage_routes = await self._get_routing_options(stage_start, stage_end, stage_waypoints, transport_preference, route_preference)
+			
+			# Create stage object
+			stage = RouteStage(
+				stage_id=stage_id,
+				start_point=stage_points[0] if stage_points else None,
+				end_point=stage_points[-1] if stage_points else None,
+				waypoints=stage_points[1:-1] if len(stage_points) > 2 else [],
+				transport_preference=transport_preference,
+				route_preference=route_preference,
+				routes=stage_routes,
+				description=description
+			)
+			stages.append(stage)
+			
+			# Update last_end_point for next stage
+			if stage_points:
+				last_end_point = stage_points[-1]
+				logger.info(f"🔄 MAP ASSISTANT: Updated last_end_point: {last_end_point.name} ({last_end_point.latitude}, {last_end_point.longitude})")
+			
+			# Add to friendly text
+			friendly_text_parts.append(f"🔄 Этап {i+1}: {description}")
+			if stage_routes:
+				friendly_text_parts.append(f"   🚗 {len(stage_routes)} вариантов маршрута")
+		
+		# Generate overall friendly text
+		friendly_text = f"✅ Многоэтапный маршрут построен!\n\n" + "\n".join(friendly_text_parts)
+		
+		logger.info(f"✅ MAP ASSISTANT: Multi-stage route completed with {len(stages)} stages and {len(all_points)} total points")
+		
+		return EnhancedRouteResponse(
+			points=all_points,
+			stages=stages,
+			text=friendly_text,
+			success=True
+		)
+	
+	async def _process_single_stage_route(self, parsed_info: Dict[str, Any]) -> EnhancedRouteResponse:
+		"""Process a single-stage route (original logic)."""
+		logger.info(f"📍 MAP ASSISTANT: Processing single-stage route")
+		
+		points = []
+		friendly_text_parts = []
+		
+		# Process start point
+		if parsed_info.get("start_point"):
+			logger.info(f"📍 MAP ASSISTANT: Processing start point: {parsed_info['start_point']}")
+			coords = await self._geocode_address(parsed_info["start_point"])
+			if coords:
+				lat, lon, address = coords
+				points.append(RoutePoint(
+					name=parsed_info["start_point"],
+					latitude=lat,
+					longitude=lon,
+					point_type="start",
+					address=address
+				))
+				friendly_text_parts.append(f"📍 Точка отправления: {address}")
+				logger.info(f"✅ MAP ASSISTANT: Start point added: {address}")
+			else:
+				logger.warning(f"⚠️ MAP ASSISTANT: Start point not found: {parsed_info['start_point']}")
+		else:
+			logger.info(f"📍 MAP ASSISTANT: No start point specified, using current location")
+			points.append(RoutePoint(
+				name="Текущее местоположение",
+				latitude=55.755814,
+				longitude=37.617635,
+				point_type="start",
+				address="Текущее местоположение"
+			))
+			friendly_text_parts.append(f"📍 Точка отправления: Текущее местоположение")
+		
+		# Process waypoints
+		waypoints = parsed_info.get("waypoints", [])
+		logger.info(f"🛍️ MAP ASSISTANT: Processing {len(waypoints)} waypoints")
+		for i, waypoint in enumerate(waypoints):
+			if isinstance(waypoint, dict):
+				name = waypoint.get("name", "")
+				place_type = waypoint.get("type", "")
+				description = waypoint.get("description", "")
+				
+				search_query = self._create_contextual_search_query(name, place_type, description)
+				places = await self._search_places(search_query)
+				
+				if places:
+					place = places[0]
+					point = place.get("point", {})
+					points.append(RoutePoint(
+						name=place.get("name", name),
+						latitude=float(point.get("lat", 0)),
+						longitude=float(point.get("lon", 0)),
+						point_type="waypoint",
+						description=description,
+						address=place.get("address_name")
+					))
+					friendly_text_parts.append(f"🛍️ По дороге: {place.get('name')} ({place.get('address_name', '')})")
+		
+		# Process end point
+		if parsed_info.get("end_point"):
+			logger.info(f"🎯 MAP ASSISTANT: Processing end point: {parsed_info['end_point']}")
+			coords = await self._geocode_address(parsed_info["end_point"])
+			if coords:
+				lat, lon, address = coords
+				points.append(RoutePoint(
+					name=parsed_info["end_point"],
+					latitude=lat,
+					longitude=lon,
+					point_type="end",
+					address=address
+				))
+				friendly_text_parts.append(f"🎯 Точка назначения: {address}")
+		
+		# Build routes
+		routes = []
+		if len(points) >= 2:
+			start_point = points[0]
+			end_point = points[-1]
+			waypoints = points[1:-1] if len(points) > 2 else []
+			transport_preference = parsed_info.get("transport_preference", "any")
+			route_preference = parsed_info.get("route_preference")
+			
+			routes = await self._get_routing_options(start_point, end_point, waypoints, transport_preference, route_preference)
+		
+		# Generate friendly text
+		friendly_text = f"✅ Маршрут построен!\n\n" + "\n".join(friendly_text_parts)
+		
+		if routes:
+			friendly_text += f"\n\n🚗 Доступные варианты маршрутов:\n"
+			for i, route in enumerate(routes[:3], 1):
+				friendly_text += f"{i}. {route.summary}\n"
+		
+		logger.info(f"✅ MAP ASSISTANT: Single-stage route completed with {len(points)} points and {len(routes)} routes")
+		
+		return EnhancedRouteResponse(
+			points=points,
+			routes=routes,
+			text=friendly_text,
+			success=True
+		)
+
 	def get_history(self) -> List[Dict[str, str]]:
 		"""Return chat history as list of dicts: {role, content}."""
 		out: List[Dict[str, str]] = []
@@ -1600,4 +2291,4 @@ class MapAssistant:
 		self._history.clear()
 
 
-__all__ = ["LangChainGroqChatbot", "MapAssistant", "RoutePoint", "RouteResponse", "RouteSegment", "Route", "EnhancedRouteResponse"]
+__all__ = ["LangChainGroqChatbot", "MapAssistant", "RoutePoint", "RouteResponse", "RouteSegment", "Route", "RouteStage", "EnhancedRouteResponse"]

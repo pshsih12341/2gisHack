@@ -3,6 +3,10 @@ name: Frontend Deploy
 on:
     workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
     build-and-push:
         runs-on: ubuntu-latest

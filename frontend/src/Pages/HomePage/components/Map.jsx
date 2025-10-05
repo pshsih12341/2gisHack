@@ -8,6 +8,8 @@ import {ROUTING_API_KEY} from '../../../Api/config';
 import axios from 'axios';
 import {bigResponce, responce} from '../consts';
 import wellknown from 'wellknown';
+import {useRoute} from '../../../Shared/RouteContext';
+import {useStore} from '../../../App/store';
 
 const MapWrapper = React.memo(
   () => {
@@ -20,18 +22,22 @@ const Map = () => {
   const [mapInstance, setMapInstance] = useState(null);
   const [sourceInstance, setSourceInstance] = useState(null);
   const [markerInstance, setMarkerInstance] = useState(null);
+  const [mapglAPIState, setMapglAPIState] = useState(null);
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapError, setMapError] = useState(null);
   const [showGeolocationPrompt, setShowGeolocationPrompt] = useState(false);
   const [hasRequestedLocation, setHasRequestedLocation] = useState(false);
 
   const {location, error: geoError, isLoading: isGeoLoading, getCurrentPosition} = useGeolocation();
+  const {updateRouteData} = useRoute();
+  const {geolocationPermission, setGeolocationPermission} = useStore();
 
   useEffect(() => {
-    if (!hasRequestedLocation && !isGeoLoading && !location && !geoError) {
+    // Показываем промпт только если разрешение еще не запрашивалось
+    if (geolocationPermission === null && !hasRequestedLocation && !isGeoLoading && !location && !geoError) {
       setShowGeolocationPrompt(true);
     }
-  }, [hasRequestedLocation, isGeoLoading, location, geoError]);
+  }, [geolocationPermission, hasRequestedLocation, isGeoLoading, location, geoError]);
 
   useEffect(() => {
     if (location && mapInstance && markerInstance) {
@@ -40,28 +46,54 @@ const Map = () => {
       markerInstance.setCoordinates([location.longitude, location.latitude]);
     }
   }, [location, mapInstance, markerInstance]);
-  function mapResponseToFeatures(response) {
-    const features = [];
-    const currentRes = response?.stages[0].routes;
-    response?.stages[0]?.routes?.forEach((route) => {
-      route?.raw_data?.movements?.forEach((movement) => {
-        movement?.alternatives?.forEach((alternative) => {
-          alternative?.geometry?.forEach((geom) => {
-            const geometry = wellknown.parse(geom.selection);
-            if (geometry) {
-              features.push({
-                type: 'Feature',
-                geometry: geometry,
-              });
-            }
+  function generateLayers(response, mapglAPI, map) {
+    const colors = ['#0000ff', '#ff0000', '#00ff00', '#ffa500', '#800080'];
+    const layers = [];
+    response?.stages?.forEach((stage, index) => {
+      const features = [];
+      stage.routes?.forEach((route) => {
+        route?.raw_data?.movements?.forEach((movement) => {
+          movement?.alternatives?.forEach((alternative) => {
+            alternative?.geometry?.forEach((geom) => {
+              const geometry = wellknown.parse(geom.selection);
+              if (geometry) {
+                features.push({
+                  type: 'Feature',
+                  geometry: geometry,
+                  properties: {
+                    bar: index.toString(),
+                  },
+                });
+              }
+            });
           });
         });
       });
+
+      const source = new mapglAPI.GeoJsonSource(map, {
+        data: {
+          type: 'FeatureCollection',
+          features: features,
+        },
+        attributes: {
+          bar: index.toString(),
+        },
+      });
+      const color = colors[index];
+      const layer = {
+        id: `my-polygons-layer-${index}`,
+
+        filter: ['match', ['sourceAttr', 'bar'], [index.toString()], true, false],
+        type: 'line',
+        style: {
+          color: color,
+          width: 2,
+        },
+      };
+      layers.push(layer);
     });
-    return {
-      type: 'FeatureCollection',
-      features: features,
-    };
+    console.log(layers);
+    return layers;
   }
 
   useEffect(() => {
@@ -72,12 +104,13 @@ const Map = () => {
     const initMap = async () => {
       try {
         const mapglAPI = await load();
+        setMapglAPIState(mapglAPI);
         const center = location ? [location.longitude, location.latitude] : [37.61556, 55.75222];
 
         map = new mapglAPI.Map('map-container', {
           center,
           zoom: location ? 15 : 10,
-          key: 'dcae5afc-c412-4a64-a4a0-53e033d88bc6',
+          key: 'dcae5afc-casdasd',
         });
 
         setMapInstance(map);
@@ -92,36 +125,12 @@ const Map = () => {
         marker.show();
         setMarkerInstance(marker);
 
-        const source = new mapglAPI.GeoJsonSource(map, {
-          data: mapResponseToFeatures(bigResponce),
-          attributes: {
-            bar: 'asd',
-          },
-        });
-        setSourceInstance(source);
-        const layer = {
-          id: 'my-polygons-layer', // ID каждого слоя должен быть уникальным
-
-          // Логика фильтрации или выбора данных для этого слоя
-          filter: [
-            'match',
-            ['sourceAttr', 'bar'],
-            ['asd'],
-            true, // Значение при совпадении атрибута bar источника cо значением "asd"
-            false, // Значение при несовпадении
-          ],
-
-          // Тип объекта отрисовки
-          type: 'line',
-
-          // Стиль объекта отрисовки
-          style: {
-            color: '#0000ff',
-            width: 2,
-          },
-        };
         map.on('styleload', () => {
-          map.addLayer(layer);
+          const layers = generateLayers(bigResponce, mapglAPI, map);
+          layers.forEach((layer) => {
+            console.log(layer);
+            map.addLayer(layer);
+          });
         });
 
         map.on('click', handleMapClick);
@@ -147,41 +156,65 @@ const Map = () => {
   const handleAllowGeolocation = () => {
     setShowGeolocationPrompt(false);
     setHasRequestedLocation(true);
+    setGeolocationPermission('granted');
     getCurrentPosition();
+    // Открываем попап после разрешения геолокации
+    updateRouteData({
+      stages: [],
+      totalTime: 0,
+      totalDistance: 0,
+      message: 'Геолокация разрешена! Теперь вы можете строить маршруты.',
+    });
   };
 
   const handleDenyGeolocation = () => {
     setShowGeolocationPrompt(false);
     setHasRequestedLocation(true);
+    setGeolocationPermission('denied');
+    // Открываем попап после запрета геолокации
+    updateRouteData({
+      stages: [],
+      totalTime: 0,
+      totalDistance: 0,
+      message: 'Геолокация запрещена. Некоторые функции могут быть недоступны.',
+    });
   };
 
   // Функции для пешеходных маршрутов
   const handleMapClick = async (event) => {
     const coordinates = [event.lngLat[0], event.lngLat[1]];
-    // const route = axios.post(
-    //   'https://routing.api.2gis.com/public_transport/2.0?key=dcae5afc-c412-4a64-a4a0-53e033d88bc6',
-    //   {
-    //     locale: 'ru',
-    //     source: {
-    //       name: 'Начальная точка',
-    //       point: {
-    //         lat: location.latitude,
-    //         lon: location.longitude,
-    //       },
-    //     },
-    //     target: {
-    //       name: 'Конечная точка',
-    //       point: {
-    //         lat: coordinates[1],
-    //         lon: coordinates[0],
-    //       },
-    //     },
-    //     transport: ['bus', 'tram', 'pedestrian', 'metro'],
-    //   }
-    // );
-    // console.log(route);
-  };
 
+    // Генерируем слои для отображения на карте
+    const layers = generateLayers(bigResponce, mapglAPIState, mapInstance);
+    layers.forEach((layer) => {
+      try {
+        mapInstance.addLayer(layer);
+        console.log(`Layer ${layer.id} added successfully`);
+      } catch (error) {
+        console.error(`Error adding layer ${layer.id}:`, error);
+      }
+    });
+
+    // Обновляем данные маршрута в контексте
+    const mockRouteData = {
+      stages: bigResponce.stages || [],
+      totalTime: 45, // Примерное время в минутах
+      totalDistance: 2500, // Примерное расстояние в метрах
+      startPoint: {
+        lat: location?.latitude || 55.75222,
+        lng: location?.longitude || 37.61556,
+        name: 'Ваше местоположение',
+      },
+      endPoint: {
+        lat: coordinates[1],
+        lng: coordinates[0],
+        name: 'Выбранная точка',
+      },
+    };
+
+    updateRouteData(mockRouteData);
+  };
+  console.log(mapInstance);
   return (
     <div className='w-full h-full space-y-4'>
       {/* Промпт геолокации */}

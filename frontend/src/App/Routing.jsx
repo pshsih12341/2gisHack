@@ -2,6 +2,7 @@ import React from 'react';
 import {BrowserRouter as Router, Routes, Route} from 'react-router-dom';
 import Layout from '../Shared/Layout';
 import HomePage from '../Pages/HomePage';
+import ProfilePage from '../Pages/ProfilePage';
 import NotFoundPage from '../Pages/NotFoundPage';
 
 import {Navigate} from 'react-router-dom';
@@ -23,8 +24,9 @@ const Routing = () => {
       <Routes>
         <Route path='/' element={<Layout />}>
           <Route index element={<HomePage />} />
-          <Route path='*' element={<NotFoundPage />} />
         </Route>
+        <Route path='profile' element={<ProfilePage />} />
+        <Route path='*' element={<NotFoundPage />} />
       </Routes>
     </Router>
   );

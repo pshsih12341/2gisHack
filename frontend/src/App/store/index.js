@@ -6,5 +6,7 @@ export const useStore = create((set) => {
       name: 'John Doe',
     },
     setUser: (user) => set({user}),
+    geolocationPermission: null, // null, 'granted', 'denied'
+    setGeolocationPermission: (permission) => set({geolocationPermission: permission}),
   };
 });

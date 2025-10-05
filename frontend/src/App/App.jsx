@@ -5,13 +5,14 @@ import PWAUpdatePrompt from '../components/PWAUpdatePrompt';
 import PWAInstallPrompt from '../components/PWAInstallPrompt';
 import './index.css';
 import MapProvider from '../Shared/MapContenxProvider';
+import {RouteProvider} from '../Shared/RouteContext';
 
 const App = () => {
   return (
     <MapProvider>
-      <Routing />
-      <PWAUpdatePrompt />
-      <PWAInstallPrompt />
+      <RouteProvider>
+        <Routing />
+      </RouteProvider>
     </MapProvider>
   );
 };

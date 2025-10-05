@@ -595,58 +595,29 @@ class MapAssistant:
 ВАЖНО: Отвечай только JSON. Не зацикливайся!"""
 	
 	async def _geocode_address(self, address: str) -> Optional[Tuple[float, float, str]]:
-		"""Geocode an address using 2GIS Geocoder API.
+		"""Geocode an address using 2GIS Places API only.
 		
 		Returns:
 			Tuple of (latitude, longitude, formatted_address) or None if not found.
 		"""
-		logger.info(f"🗺️ 2GIS GEOCODER REQUEST: Geocoding address: '{address}'")
+		logger.info(f"🗺️ GEOCODING REQUEST: Searching for: '{address}' using Places API only")
 		
-		# Get region_id first
-		region_id = await self._get_region_id()
+		# Use Places API only
+		logger.info(f"🏪 PLACES API: Searching for '{address}'")
+		places = await self._search_places(address)
 		
-		params = {
-			"q": address,
-			"region_id": region_id,
-			"key": self.dgis_key,
-			"fields": "items.point,items.address_name"
-		}
-		
-		logger.info(f"📤 2GIS GEOCODER REQUEST: URL: {self.geocoder_url}")
-		logger.info(f"📤 2GIS GEOCODER REQUEST: Params: {params}")
-		
-		try:
-			# Build full URL for logging
-			full_url = f"{self.geocoder_url}?" + "&".join([f"{k}={v}" for k, v in params.items()])
-			logger.info(f"📤 2GIS GEOCODER REQUEST: Full URL: {full_url}")
+		if places:
+			place = places[0]
+			point = place.get("point", {})
+			lat = float(point.get("lat", 0))
+			lon = float(point.get("lon", 0))
+			name = place.get("name", address)
+			address_name = place.get("address_name", name)
 			
-			async with aiohttp.ClientSession() as session:
-				async with session.get(self.geocoder_url, params=params) as response:
-					logger.info(f"📥 2GIS GEOCODER RESPONSE: Status {response.status}")
-					logger.info(f"📥 2GIS GEOCODER RESPONSE: Headers: {dict(response.headers)}")
-					
-					if response.status == 200:
-						data = await response.json()
-						logger.info(f"📥 2GIS GEOCODER RESPONSE: Full data: {json.dumps(data, ensure_ascii=False, indent=2)}")
-						
-						if data.get("result") and data["result"].get("items"):
-							item = data["result"]["items"][0]
-							point = item.get("point", {})
-							address_name = item.get("address_name", address)
-							lat = float(point.get("lat", 0))
-							lon = float(point.get("lon", 0))
-							
-							logger.info(f"✅ 2GIS GEOCODER SUCCESS: Found coordinates {lat}, {lon} for '{address_name}'")
-							return (lat, lon, address_name)
-						else:
-							logger.warning(f"⚠️ 2GIS GEOCODER WARNING: No items found for '{address}'")
-					else:
-						error_text = await response.text()
-						logger.error(f"❌ 2GIS GEOCODER ERROR: HTTP {response.status}")
-						logger.error(f"❌ 2GIS GEOCODER ERROR: Response body: {error_text}")
-		except Exception as e:
-			logger.error(f"❌ 2GIS GEOCODER ERROR: Request failed for '{address}': {e}")
+			logger.info(f"✅ PLACES API SUCCESS: Found coordinates {lat}, {lon} for '{name}'")
+			return (lat, lon, address_name)
 		
+		logger.warning(f"⚠️ PLACES API: No results found for '{address}'")
 		return None
 	
 	def _improve_search_query(self, name: str, place_type: str) -> str:

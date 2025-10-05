@@ -3,9 +3,13 @@ Router for Map Assistant API endpoints.
 """
 
 from fastapi import APIRouter, HTTPException
+import httpx
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
+
+from .schemas import AdaptiveRequest
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -239,3 +243,38 @@ async def health_check():
         "service": "Map Assistant",
         "version": "1.0.0"
     }
+
+@router.post("/route/wheelchair")
+async def wheelchair_route(request: AdaptiveRequest):
+    points_dict = [p.model_dump() for p in request.points]
+    params = {
+        "avoid": ["ban_stairway", "dirt_road", "ferry", "highway"],
+        "need_altitudes": True,
+        "route_mode": "shortest",
+        "output": "detailed"
+    }
+    try:
+        result = await call_routing_api(points_dict, params)
+
+        for route in result.get("routes", []):
+            max_angle = route.get("legs", [{}])[0].get("altitudes_info", {}).get("max_road_angle", 0)
+            print(f"DEBUG: Checking max_road_angle: {max_angle} degrees")
+            if max_angle > 5:
+                raise HTTPException(status_code=400, detail=f"Route has steep incline: {max_angle} degrees")
+            for leg in route.get("legs", []):
+                if leg.get("transport", {}).get("mode") == "metro":
+                    async with httpx.AsyncClient() as client:
+                        station_lon, station_lat = leg["points"][0]["lon"], leg["points"][0]["lat"]
+                        resp = await client.get(
+                            f"{GIS_PLACES_URL}/places/search",
+                            headers={"Authorization": f"Bearer {API_KEY}"},
+                            params={"lon": station_lon, "lat": station_lat, "radius": 100, "categories": "metro_stations"}
+                        )
+                        if resp.status_code == 200:
+                            items = resp.json().get("items", [])
+                            for item in items:
+                                if item.get("structure_info", {}).get("elevators_count", 0) == 0:
+                                    raise HTTPException(status_code=400, detail="Inaccessible metro station")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

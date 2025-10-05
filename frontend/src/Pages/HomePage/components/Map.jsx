@@ -114,7 +114,7 @@ const Map = () => {
         map = new mapglAPI.Map('map-container', {
           center,
           zoom: location ? 15 : 10,
-          key: 'dcf704a4-be05-4c21-be87-e7f292ee00f1',
+          key: '7889d023-2357-402b-a407-b16c3b316fd5',
         });
         setMapInstance(map);
         setIsMapLoading(false);

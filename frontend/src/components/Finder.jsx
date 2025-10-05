@@ -21,6 +21,7 @@ import {useStore} from '../App/store';
 import {wheelchairService} from '../Api/wheelchairService';
 import {restroomsService} from '../Api/restroomsService';
 import {lowStimulusService} from '../Api/lowStimulusService';
+import {greenService} from '../Api/greenService';
 import {Directions} from '@2gis/mapgl-directions';
 import {ROUTING_API_KEY} from '../Api/config';
 import {MapContext} from '../Shared/MapContenxProvider';
@@ -32,6 +33,7 @@ const Finder = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isRestroomsLoading, setIsRestroomsLoading] = useState(false);
   const [isLowStimulusLoading, setIsLowStimulusLoading] = useState(false);
+  const [isGreenLoading, setIsGreenLoading] = useState(false);
   const {firstPoint, secondPoint} = useStore();
   const [mapInstance] = useContext(MapContext);
 
@@ -141,6 +143,40 @@ const Finder = () => {
       alert('Ошибка при получении маршрута для низкой стимуляции');
     } finally {
       setIsLowStimulusLoading(false);
+    }
+  };
+
+  const handleGreenRoute = async () => {
+    if (!firstPoint || !secondPoint) {
+      alert('Пожалуйста, выберите начальную и конечную точки на карте');
+      return;
+    }
+
+    setIsGreenLoading(true);
+    try {
+      const points = [
+        {lon: `${firstPoint.lon}`, lat: `${firstPoint.lat}`, type: 'stop'},
+        {lon: `${secondPoint.lon}`, lat: `${secondPoint.lat}`, type: 'stop'},
+      ];
+      console.log('Green Points:', points);
+      const response = await greenService.getGreenRoute(points);
+      console.log('Зеленый маршрут:', response);
+
+      const directions = new Directions(mapInstance, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+      const directionsPoints = response.route.query.points.map((point) => [
+        parseFloat(point.lon),
+        parseFloat(point.lat),
+      ]);
+      directions.pedestrianRoute({
+        points: directionsPoints,
+      });
+    } catch (error) {
+      console.error('Ошибка при получении зеленого маршрута:', error);
+      alert('Ошибка при получении зеленого маршрута');
+    } finally {
+      setIsGreenLoading(false);
     }
   };
 
@@ -258,6 +294,18 @@ const Finder = () => {
               }`}
             >
               {isLowStimulusLoading ? 'Загрузка...' : 'Нейроотличные'}
+            </button>
+
+            <button
+              onClick={handleGreenRoute}
+              disabled={isGreenLoading || !firstPoint || !secondPoint}
+              className={`flex-shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                isGreenLoading || !firstPoint || !secondPoint
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
+            >
+              {isGreenLoading ? 'Загрузка...' : 'Зеленый'}
             </button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const GEOCODING_API_KEY = 'dcf704a4-be05-4c21-be87-e7f292ee00f1';
+const GEOCODING_API_KEY = '7889d023-2357-402b-a407-b16c3b316fd5';
 const GEOCODING_BASE_URL = 'https://catalog.api.2gis.com/3.0';
 
 export const geocodingService = {

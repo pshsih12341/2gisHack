@@ -8,7 +8,7 @@ import asyncio
 from .reroute import reroute_with_slope_limit
 
 from .schemas import AdaptiveRequest
-from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_lit_streets_overpass, get_open_places_2gis, route_metrics
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_green_places_2gis_labeled, get_lit_streets_overpass, get_open_places_2gis, route_metrics
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -395,4 +395,50 @@ async def safely_router(request: AdaptiveRequest):
         raise
     except Exception as e:
         print(f"DEBUG: Ошибка в safely_router: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/route/green")
+async def green_router(request: AdaptiveRequest):
+    points_dict = [p.model_dump() for p in request.points]
+
+    base_params = {
+        "filters": ["dirt_road", "ferry", "highway"],   # избегаем грунт/паром/магистрали
+        "need_altitudes": True,
+        "route_mode": "shortest",
+        "output": "detailed",
+    }
+
+    try:
+        base_result = await call_routing_api(points_dict, base_params)
+        if base_result.get("status") != "OK" or not (base_result.get("result") or []):
+            raise HTTPException(status_code=502, detail="Routing API error (base)")
+
+        min_lat, min_lon, max_lat, max_lon = extract_bbox_from_route(base_result)
+        if (min_lat, min_lon, max_lat, max_lon) == (0.0, 0.0, 0.0, 0.0):
+            s_lat, s_lon = float(points_dict[0]["lat"]), float(points_dict[0]["lon"])
+            e_lat, e_lon = float(points_dict[-1]["lat"]), float(points_dict[-1]["lon"])
+            min_lat, max_lat = min(s_lat, e_lat), max(s_lat, e_lat)
+            min_lon, max_lon = min(s_lon, e_lon), max(s_lon, e_lon)
+
+        bbox = (min_lat, min_lon, max_lat, max_lon)
+
+        green_labeled = await get_green_places_2gis_labeled(bbox, limit=12)
+
+        enhanced_points = points_dict + [
+            {"type": "via", "lon": str(p["lon"]), "lat": str(p["lat"])}
+            for p in green_labeled
+        ]
+        green = await call_routing_api(enhanced_points, base_params)
+
+        return {
+            "status": "OK",
+            "type": "green_route",
+            "route": green,
+            "green_pois": green_labeled,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: green_router error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

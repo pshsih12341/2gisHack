@@ -261,3 +261,68 @@ def extract_bbox_from_route(route_data: Dict) -> Tuple[float, float, float, floa
     # грубо переведём 50 м в градусы широты/долготы для Москвы
     pad_deg = 50 / 111320.0
     return (min_lat - pad_deg, min_lon - pad_deg, max_lat + pad_deg, max_lon + pad_deg)
+
+async def get_green_places_2gis_labeled(
+    bbox: Tuple[float, float, float, float],
+    limit: int = 20
+) -> List[Dict]:
+    """
+    2GIS Catalog API: ищем «зелёные» места и возвращаем список с метками.
+    Каждый элемент: {
+        "lon": float, "lat": float,
+        "name": str, "category": str, "address": str,
+        "place_id": str
+    }
+    """
+    bbox_str = f"{bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]}"  # lon1,lat1,lon2,lat2
+
+    params = {
+        "bbox": bbox_str,
+        "categories": "park,garden,boulevard,embankment,promenade,waterfront",
+        "limit": limit,
+        "key": API_KEY,
+        "locale": "ru",
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{GIS_PLACES_URL}/places/search", params=params)
+        if resp.status_code != 200:
+            print(f"DEBUG: Places API error (green labeled): {resp.text}")
+            return []
+        data: Dict = resp.json()
+
+    out: List[Dict] = []
+    seen = set()
+    for item in data.get("items", []):
+        try:
+            lon = float(item.get("lon") or 0.0)
+            lat = float(item.get("lat") or 0.0)
+            if not lon or not lat:
+                continue
+            key = (round(lon, 5), round(lat, 5))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            # Название/адрес/категория — берём максимально «живые» поля, с фолбэками
+            name = item.get("name") or item.get("full_name") or "Без названия"
+            address = item.get("address_name") or item.get("address") or ""
+            category = ""
+            if "categories" in item and isinstance(item["categories"], list) and item["categories"]:
+                category = item["categories"][0].get("name") or item["categories"][0].get("slug") or ""
+            elif "rubrics" in item and isinstance(item["rubrics"], list) and item["rubrics"]:
+                category = item["rubrics"][0].get("name") or item["rubrics"][0].get("alias") or ""
+
+            out.append({
+                "lon": lon,
+                "lat": lat,
+                "name": name,
+                "category": category or "green_place",
+                "address": address,
+                "place_id": item.get("id") or item.get("place_id") or "",
+            })
+            if len(out) >= limit:
+                break
+        except Exception:
+            continue
+    return out

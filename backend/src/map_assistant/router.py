@@ -1,8 +1,5 @@
-"""
-Router for Map Assistant API endpoints.
-"""
-
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -11,7 +8,7 @@ import asyncio
 from .reroute import reroute_with_slope_limit
 
 from .schemas import AdaptiveRequest
-from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_lit_streets_overpass, get_open_places_2gis
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_lit_streets_overpass, get_open_places_2gis, route_metrics
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -316,30 +313,86 @@ async def wheelchair_route(request: AdaptiveRequest):
 async def safely_router(request: AdaptiveRequest):
     points_dict = [p.model_dump() for p in request.points]
     
-    params = {
-        "filters": [],
+    base_params = {
+        "filters": ["ban_stairway"],
         "need_altitudes": True,
         "route_mode": "shortest",
         "output": "detailed"
     }
 
     try:
-        base_result = await call_routing_api(points_dict, params)
-        bbox = extract_bbox_from_route(base_result)
-        min_lat, min_lon, max_lat, max_lon = bbox
-        bbox_str = f"{min_lon}, {min_lat}, {max_lon}, {max_lat}"
-
-        lit_midpoints = await get_lit_streets_overpass(bbox)
-        open_places = await get_open_places_2gis(bbox_str)
-        all_via = lit_midpoints + open_places
-
-        enhanced_points = points_dict + [{"type": "pref", "lon": str(lon), "lat": str(lat)} for lon, lat in all_via]
+        base_result = await call_routing_api(points_dict, base_params)
+        if base_result.get("status") != "OK" or not (base_result.get("result") or []):
+            raise HTTPException(status_code=502, detail="Routing API error (base)")
         
-        safe_params = params.copy()
+        base_route = base_result["result"][0]
+        base_met = route_metrics(base_route)
 
-        safe_result = await call_routing_api(enhanced_points, safe_params)
-        return safe_result
-    
+        min_lat, min_lon, max_lat, max_lon = extract_bbox_from_route(base_result)
+        if (min_lat, min_lon, max_lat, max_lon) == (0.0, 0.0, 0.0, 0.0):
+            # фолбэк: построим bbox по старт/финиш
+            start = (float(points_dict[0]["lat"]), float(points_dict[0]["lon"]))
+            end   = (float(points_dict[-1]["lat"]), float(points_dict[-1]["lon"]))
+            min_lat = min(start[0], end[0]); max_lat = max(start[0], end[0])
+            min_lon = min(start[1], end[1]); max_lon = max(start[1], end[1])
+
+        bbox_str = f"{min_lon},{min_lat},{max_lon},{max_lat}"
+
+        lit_midpoints = await get_lit_streets_overpass((min_lat, min_lon, max_lat, max_lon))
+        open_places   = await get_open_places_2gis(bbox_str)
+
+        all_via = []
+        for a, b in zip(lit_midpoints, open_places):
+            all_via.extend([a, b])
+        if len(lit_midpoints) > len(open_places):
+            all_via.extend(lit_midpoints[len(open_places):])
+        elif len(open_places) > len(lit_midpoints):
+            all_via.extend(open_places[len(lit_midpoints):])
+
+        enhanced_points = points_dict + [
+            {"type": "via", "lon": str(lon), "lat": str(lat)} for lon, lat in all_via
+        ]
+
+        safe_result = await call_routing_api(enhanced_points, base_params)
+        if safe_result.get("status") != "OK" or not (safe_result.get("result") or []):
+            # если не удалось — возвращаем базовый, но помечаем в заголовке
+            headers = {
+                "X-Route-mode": "safely",
+                "X-Route-lit-bbox": bbox_str,
+                "X-Route-lit-count": str(len(lit_midpoints)),
+                "X-Route-open-places": str(len(open_places)),
+                "X-Route-via-count": str(len(all_via)),
+                "X-Route-time-base": f"{base_met['duration_s']}",
+                "X-Route-time-safe": "NA",
+                "X-Route-angle-base": f"{base_met['max_angle_deg']:.1f}",
+                "X-Route-angle-safe": "NA",
+                "X-Route-selected": "base",
+            }
+            return JSONResponse(content=base_result, headers=headers)
+        
+        safe_route = safe_result["result"][0]
+        safe_met = route_metrics(safe_route)
+
+        selected = "safe" if safe_met["max_angle_deg"] <= base_met["max_angle_deg"] else "base"
+        response_payload = safe_result if selected == "safe" else base_result
+
+        headers = {
+            "X-Route-mode": "safely",
+            "X-Route-lit-bbox": bbox_str,
+            "X-Route-lit-count": str(len(lit_midpoints)),
+            "X-Route-open-places": str(len(open_places)),
+            "X-Route-via-count": str(len(all_via)),
+            "X-Route-time-base": f"{base_met['duration_s']}",
+            "X-Route-time-safe": f"{safe_met['duration_s']}",
+            "X-Route-angle-base": f"{base_met['max_angle_deg']:.1f}",
+            "X-Route-angle-safe": f"{safe_met['max_angle_deg']:.1f}",
+            "X-Route-selected": selected,
+        }
+
+        return JSONResponse(content=response_payload, headers=headers)
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"DEBUG: Ошибка в safely_router: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

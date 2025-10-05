@@ -48,7 +48,10 @@ jobs:
                 password: ${{ secrets.SSH_PASSWORD }}
                 script: |
                     cd /root/2gisHack
+                    echo "DEBUG: YC_SA_JSON_KEY length: $(echo '$YC_SA_JSON_KEY' | wc -c)"
+                    echo "$YC_SA_JSON_KEY" | wc -c
                     echo "$YC_SA_JSON_KEY" | docker login --username json_key --password-stdin cr.yandex
+                    if [ $? -ne 0 ]; then echo "LOGIN FAILED"; exit 1; fi
                     docker compose pull frontend
                     docker compose up -d --no-deps frontend
                     docker system prune -f

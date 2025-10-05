@@ -10,7 +10,7 @@ from .order_vias import order_and_filter_vias_along_route
 from .reroute import reroute_with_slope_limit
 
 from .schemas import AdaptiveRequest
-from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_green_places_2gis_labeled, get_lit_streets_overpass, get_open_places_2gis, get_toilets_osm, route_metrics
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_green_places_2gis_labeled, get_hotspots_2gis, get_lit_streets_overpass, get_open_places_2gis, get_toilets_osm, route_metrics
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -527,4 +527,110 @@ async def route_restrooms(
         raise
     except Exception as e:
         print(f"DEBUG: route_restrooms error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/route/low_stimulus")
+async def route_low_stimulus(
+    request: AdaptiveRequest,
+    max_vias: int = 8,
+    hotspot_radius_m: int = 200,
+):
+    """
+    «Щадящий» маршрут: избегаем мест с вероятным скоплением людей и не идём по dirt_road/highway.
+    """
+    points = [p.model_dump() for p in request.points]
+
+    base_params = {
+        "filters": ["dirt_road", "highway"],
+        "need_altitudes": True,
+        "route_mode": "shortest",
+        "output": "detailed",
+    }
+
+    try:
+        base = await call_routing_api(points, base_params)
+        if base.get("status") != "OK" or not (base.get("result") or []):
+            raise HTTPException(status_code=502, detail="Routing API error (base)")
+
+        base_route = base["result"][0]
+
+        min_lat, min_lon, max_lat, max_lon = extract_bbox_from_route(base)
+        if (min_lat, min_lon, max_lat, max_lon) == (0.0, 0.0, 0.0, 0.0):
+            s_lat, s_lon = float(points[0]["lat"]), float(points[0]["lon"])
+            e_lat, e_lon = float(points[-1]["lat"]), float(points[-1]["lon"])
+            min_lat, max_lat = min(s_lat, e_lat), max(s_lat, e_lat)
+            min_lon, max_lon = min(s_lon, e_lon), max(s_lon, e_lon)
+        bbox = (min_lat, min_lon, max_lat, max_lon)
+        hotspots = await get_hotspots_2gis(bbox, limit=40)
+
+        calm_pois = await get_green_places_2gis_labeled(bbox, limit=30)
+
+        if not hotspots and not calm_pois:
+            s_lat, s_lon = float(points[0]["lat"]), float(points[0]["lon"])
+            e_lat, e_lon = float(points[-1]["lat"]), float(points[-1]["lon"])
+            min_lat, max_lat = min(s_lat, e_lat), max(s_lat, e_lat)
+            min_lon, max_lon = min(s_lon, e_lon), max(s_lon, e_lon)
+            pad = 0.03
+            wide_bbox = (min_lat - pad, min_lon - pad, max_lat + pad, max_lon + pad)
+            print(f"DEBUG[low_stimulus]: fallback wide bbox={wide_bbox}")
+            hotspots = await get_hotspots_2gis(wide_bbox, limit=40)
+            calm_pois = await get_green_places_2gis_labeled(wide_bbox, limit=30)
+        
+        def _hav(a, b):
+            import math
+            R=6371000.0
+            lon1,lat1 = map(math.radians,a)
+            lon2,lat2 = map(math.radians,b)
+            dlon, dlat = lon2-lon1, lat2-lat1
+            x = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+            return 2*R*math.asin(math.sqrt(x))
+        hotspot_xy = [(h["lon"], h["lat"]) for h in hotspots]
+        calm_candidates = []
+        for p in calm_pois:
+            keep = True
+            for hx, hy in hotspot_xy:
+                if _hav((p["lon"], p["lat"]), (hx, hy)) <= hotspot_radius_m:
+                    keep = False
+                    break
+            if keep:
+                calm_candidates.append((p["lon"], p["lat"]))
+        if not calm_candidates:
+            calm_candidates = [(p["lon"], p["lat"]) for p in calm_pois]
+
+        ordered_vias = order_and_filter_vias_along_route(
+            base_route,
+            calm_candidates,
+            max_lateral_m=150,
+            min_step_m=350,
+            max_vias=max_vias,
+        )
+
+        start, end = points[0], points[-1]
+        middle = points[1:-1]
+        via_points = [{"type":"via","lon":str(lon),"lat":str(lat)} for lon,lat in ordered_vias]
+
+        def _k(p): return (round(float(p["lon"]),6), round(float(p["lat"]),6))
+        seen = {_k(start), _k(end)}
+        clean_vias = []
+        for v in via_points:
+            if _k(v) not in seen:
+                seen.add(_k(v))
+                clean_vias.append(v)
+
+        enhanced = [start] + middle + clean_vias + [end]
+
+        final_route = await call_routing_api(enhanced, base_params)
+
+        return {
+            "status": "OK",
+            "type": "low_stimulus_route",
+            "route": final_route,
+            "hotspots": hotspots,
+            "calm_pois": calm_pois,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: route_low_stimulus error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

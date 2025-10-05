@@ -367,3 +367,67 @@ async def get_toilets_osm(bbox: Tuple[float, float, float, float], limit: int = 
         if len(out) >= limit:
             break
     return out
+
+def _bbox_tuple_to_str(bbox: Tuple[float,float,float,float]) -> str:
+    min_lat,min_lon,max_lat,max_lon = bbox
+    return f"{min_lon},{min_lat},{max_lon},{max_lat}"
+
+async def get_hotspots_2gis(bbox: Tuple[float,float,float,float], limit: int = 40) -> List[Dict]:
+    bbox_str = _bbox_tuple_to_str(bbox)
+    cats = ",".join([
+        "metro_stations","shopping_mall","market","bazaar",
+        "stadium","sports_complex","arena",
+        "railway_station","bus_station",
+        "tourist_attraction","museum","exhibition_center",
+        "fastfood","food_court",
+    ])
+    params = {
+        "bbox": bbox_str,
+        "categories": cats,
+        "q": "метро|торговый центр|рынок|стадион|вокзал|музей|аттракцион",
+        "limit": limit,
+        "key": API_KEY,
+        "locale": "ru",
+        "fields": "items.point,items.geometry.centroid,items.categories,items.rubrics,items.name_ex",
+    }
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"{GIS_PLACES_URL}/places/search", params=params)
+        if r.status_code != 200:
+            print("DEBUG: Places hotspots error:", r.text)
+            return []
+        data = r.json()
+
+    out, seen = [], set()
+    for it in data.get("items", []):
+        # координаты: point > geometry.centroid
+        pt = it.get("point") or ((it.get("geometry") or {}).get("centroid")) or {}
+        try:
+            lon = float(pt.get("lon") or 0.0)
+            lat = float(pt.get("lat") or 0.0)
+            if not lon or not lat:
+                continue
+        except Exception:
+            continue
+
+        key = (round(lon,5), round(lat,5))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # имя/категория
+        name = it.get("name") or (it.get("name_ex") or {}).get("primary") or "Hotspot"
+        cat  = ""
+        if isinstance(it.get("categories"), list) and it["categories"]:
+            cat = it["categories"][0].get("name") or it["categories"][0].get("slug") or ""
+        elif isinstance(it.get("rubrics"), list) and it["rubrics"]:
+            cat = it["rubrics"][0].get("name") or it["rubrics"][0].get("alias") or ""
+
+        out.append({
+            "lon": lon, "lat": lat, "name": name,
+            "category": cat or "hotspot",
+            "place_id": it.get("id") or it.get("place_id") or "",
+        })
+        if len(out) >= limit:
+            break
+    print(f"DEBUG[hotspots]: bbox={bbox_str}, count={len(out)}")
+    return out

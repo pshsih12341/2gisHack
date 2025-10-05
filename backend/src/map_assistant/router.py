@@ -10,7 +10,7 @@ from .order_vias import order_and_filter_vias_along_route
 from .reroute import reroute_with_slope_limit
 
 from .schemas import AdaptiveRequest
-from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_green_places_2gis_labeled, get_lit_streets_overpass, get_open_places_2gis, route_metrics
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_green_places_2gis_labeled, get_lit_streets_overpass, get_open_places_2gis, get_toilets_osm, route_metrics
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -451,4 +451,80 @@ async def green_router(request: AdaptiveRequest):
         raise
     except Exception as e:
         print(f"DEBUG: green_router error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/route/restrooms")
+async def route_restrooms(
+    request: AdaptiveRequest,
+    max_vias: int = 6
+):
+    """
+    Маршрут «через туалеты»:
+    1) строим базовый маршрут (2GIS) чтобы получить bbox и линию,
+    2) собираем туалеты из OSM в bbox,
+    3) укладываем их вдоль маршрута и вставляем как via ПЕРЕД конечной точкой,
+    4) возвращаем финальный маршрут + список туалетов (для пинов).
+    """
+    points_dict = [p.model_dump() for p in request.points]
+
+    base_params = {
+        "filters": [],
+        "need_altitudes": True,
+        "output": "detailed",
+    }
+
+    try:
+        base = await call_routing_api(points_dict, base_params)
+        if base.get("status") != "OK" or not (base.get("result") or []):
+            raise HTTPException(status_code=502, detail="Routing API error (base)")
+
+        base_route = base["result"][0]
+
+        min_lat, min_lon, max_lat, max_lon = extract_bbox_from_route(base)
+        if (min_lat, min_lon, max_lat, max_lon) == (0.0, 0.0, 0.0, 0.0):
+            s_lat, s_lon = float(points_dict[0]["lat"]), float(points_dict[0]["lon"])
+            e_lat, e_lon = float(points_dict[-1]["lat"]), float(points_dict[-1]["lon"])
+            min_lat, max_lat = min(s_lat, e_lat), max(s_lat, e_lat)
+            min_lon, max_lon = min(s_lon, e_lon), max(s_lon, e_lon)
+
+        toilets = await get_toilets_osm((min_lat, min_lon, max_lat, max_lon), limit=20)
+
+        candidates = [(t["lon"], t["lat"]) for t in toilets]
+        ordered_vias = order_and_filter_vias_along_route(
+            base_route,
+            candidates,
+            max_lateral_m=120,
+            min_step_m=300,
+            max_vias=max_vias,
+        )
+
+        start = points_dict[0]
+        end   = points_dict[-1]
+        middle = points_dict[1:-1]
+
+        via_points = [{"type": "via", "lon": str(lon), "lat": str(lat)} for lon, lat in ordered_vias]
+
+        def _k(p): return (round(float(p["lon"]), 6), round(float(p["lat"]), 6))
+        seen = {_k(start), _k(end)}
+        clean_vias = []
+        for v in via_points:
+            if _k(v) not in seen:
+                seen.add(_k(v))
+                clean_vias.append(v)
+
+        enhanced_points = [start] + middle + clean_vias + [end]
+
+        final_result = await call_routing_api(enhanced_points, base_params)
+
+        return {
+            "status": "OK",
+            "type": "restroom_route",
+            "route": final_result,
+            "restrooms": toilets,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: route_restrooms error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

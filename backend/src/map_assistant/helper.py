@@ -326,3 +326,44 @@ async def get_green_places_2gis_labeled(
         except Exception:
             continue
     return out
+
+async def get_toilets_osm(bbox: Tuple[float, float, float, float], limit: int = 12) -> List[Dict]:
+    """
+    Возвращает туалеты из OSM в bbox как список словарей:
+    { "lon": float, "lat": float, "name": str, "source": "osm" }
+    """
+    min_lat, min_lon, max_lat, max_lon = bbox
+    query = f"""
+    [out:json][timeout:40];
+    (
+      node["amenity"="toilets"]({min_lat},{min_lon},{max_lat},{max_lon});
+      way["amenity"="toilets"]({min_lat},{min_lon},{max_lat},{max_lon});
+      relation["amenity"="toilets"]({min_lat},{min_lon},{max_lat},{max_lon});
+    );
+    out center;
+    """
+    async with httpx.AsyncClient() as client:
+        r = await client.post(OVERPASS_URL, data={"data": query})
+        if r.status_code != 200:
+            print("DEBUG: Overpass toilets error:", r.text)
+            return []
+        data = r.json()
+
+    out, seen = [], set()
+    for el in data.get("elements", []):
+        if el.get("type") == "node":
+            lon, lat = float(el["lon"]), float(el["lat"])
+        else:
+            center = el.get("center")
+            if not center:
+                continue
+            lon, lat = float(center["lon"]), float(center["lat"])
+        key = (round(lon, 5), round(lat, 5))
+        if key in seen:
+            continue
+        seen.add(key)
+        name = el.get("tags", {}).get("name") or "Туалет"
+        out.append({"lon": lon, "lat": lat, "name": name, "source": "osm"})
+        if len(out) >= limit:
+            break
+    return out

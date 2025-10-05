@@ -1,13 +1,14 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useCallback, useRef, useContext} from 'react';
 import {load} from '@2gis/mapgl';
 import {Directions} from '@2gis/mapgl-directions';
 import {useGeolocation} from '../../../Shared/hooks/useGeolocation';
 import GeolocationPrompt from '../../../components/GeolocationPrompt';
 import markerIcon from '../../../Shared/imgs/mark.png';
-import {useRoute} from '../../../Shared/RouteContext';
 import {useStore} from '../../../App/store';
 import {ROUTING_API_KEY} from '../../../Api/config';
-import axios from 'axios';
+import startIcon from '../../../Shared/imgs/startIcon.png';
+import endIcon from '../../../Shared/imgs/finishIcon.png';
+import {MapContext} from '../../../Shared/MapContenxProvider';
 
 const MapWrapper = React.memo(
   () => {
@@ -17,24 +18,15 @@ const MapWrapper = React.memo(
 );
 
 const Map = () => {
-  const [mapInstance, setMapInstance] = useState(null);
+  const [mapInstance, setMapInstance] = useContext(MapContext);
   const [markerInstance, setMarkerInstance] = useState(null);
+  const [firstPointMarker] = useState(null);
   const [isMapLoading, setIsMapLoading] = useState(true);
+  const counter = useRef(0);
   const [mapError, setMapError] = useState(null);
-  const [showGeolocationPrompt, setShowGeolocationPrompt] = useState(false);
-  const [hasRequestedLocation, setHasRequestedLocation] = useState(false);
   const [directionsInstance, setDirectionsInstance] = useState(null);
-
-  const {location, error: geoError, isLoading: isGeoLoading, getCurrentPosition} = useGeolocation();
-  const {updateRouteData} = useRoute();
-  const {geolocationPermission, setGeolocationPermission, responsePoints, firstRoutePoint} = useStore();
-
-  useEffect(() => {
-    // Показываем промпт только если разрешение еще не запрашивалось
-    if (geolocationPermission === null && !hasRequestedLocation && !isGeoLoading && !location && !geoError) {
-      setShowGeolocationPrompt(true);
-    }
-  }, [geolocationPermission, hasRequestedLocation, isGeoLoading, location, geoError]);
+  const {location} = useGeolocation();
+  const {responsePoints, firstRoutePoint, setFirstPoint, secondPoint, setSecondPoint} = useStore();
 
   useEffect(() => {
     if (location && mapInstance && markerInstance) {
@@ -44,7 +36,6 @@ const Map = () => {
     }
   }, [location, mapInstance, markerInstance]);
 
-  // Функция для построения маршрута по точкам из Zustand store
   const buildRouteFromStore = async (map, points) => {
     try {
       if (directionsInstance) {
@@ -68,61 +59,47 @@ const Map = () => {
       console.error('Error building route from Zustand store:', error);
     }
   };
-  // Функция для построения маршрута по клику
-  const buildRouteOnClick = async (map, clickCoordinates, startPoint) => {
-    try {
-      if (directionsInstance) {
-        directionsInstance.clear();
-      }
 
-      const directions = new Directions(map, {
-        directionsApiKey: ROUTING_API_KEY,
-      });
-      setDirectionsInstance(directions);
-      // Конечная точка - место клика
-      const endPoint = [clickCoordinates[0], clickCoordinates[1]];
+  // Функция для обработки клика на карте
+  const handleMapClick = useCallback(
+    async (event, map, mapglAPI) => {
+      if (!map) return;
 
-      console.log('Building route from:', startPoint, 'to:', endPoint);
-
-      const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/route/safely`, {
-        points: [
-          {
-            lon: `${startPoint[0]}`,
-            lat: `${startPoint[1]}`,
-            type: 'stop',
-          },
-          {
-            lon: `${endPoint[0]}`,
-            lat: `${endPoint[1]}`,
-            type: 'stop',
-          },
-        ],
-      });
-
-      console.log('API Response:', response.data.query);
-
-      const points = response.data.query.points.map((point) => [
-        parseFloat(point.lon), // [longitude, latitude] - формат для Directions API
-        parseFloat(point.lat),
-      ]);
-
-      // Строим пешеходный маршрут
-      directions
-        .pedestrianRoute({
-          points: points,
-        })
-        .catch((error) => {
-          console.error('Error building route:', error);
+      const coordinates = [event.lngLat[0], event.lngLat[1]];
+      const pointData = {
+        lon: coordinates[0],
+        lat: coordinates[1],
+        full_name: `Точка ${coordinates[0].toFixed(6)}, ${coordinates[1].toFixed(6)}`,
+        address_name: `Точка ${coordinates[0].toFixed(6)}, ${coordinates[1].toFixed(6)}`,
+      };
+      if (counter.current === 1) {
+        setSecondPoint(pointData);
+        const marker = new mapglAPI.Marker(map, {
+          coordinates: coordinates,
+          icon: endIcon,
+          size: [32, 32],
+          anchor: [16, 32],
         });
-    } catch (error) {
-      console.error('Error building route on click:', error);
-    }
-  };
+        marker.show();
+      } else {
+        setFirstPoint(pointData);
+        counter.current = 1;
+        const marker = new mapglAPI.Marker(map, {
+          coordinates: coordinates,
+          icon: startIcon,
+          size: [32, 32],
+          anchor: [16, 32],
+        });
+        marker.show();
+      }
+    },
+    [secondPoint, setFirstPoint, setSecondPoint]
+  );
 
   // Инициализация карты - запускается только один раз при монтировании
   useEffect(() => {
     let map;
-    setIsMapLoading(true);
+
     setMapError(null);
 
     const initMap = async () => {
@@ -139,7 +116,6 @@ const Map = () => {
           zoom: location ? 15 : 10,
           key: 'dcf704a4-be05-4c21-be87-e7f292ee00f1',
         });
-
         setMapInstance(map);
         setIsMapLoading(false);
         const marker = new mapglAPI.Marker(map, {
@@ -154,18 +130,9 @@ const Map = () => {
         if (responsePoints) {
           buildRouteFromStore(map, responsePoints);
         }
-        // Добавляем обработчик кликов на карту
-        map.on('click', (event) => {
-          const coordinates = [event.lngLat[0], event.lngLat[1]];
-          const clickMarker = new mapglAPI.Marker(map, {
-            coordinates: coordinates,
-            icon: markerIcon,
-            size: [24, 24],
-            anchor: [12, 24],
-          });
-          clickMarker.show();
 
-          buildRouteOnClick(map, coordinates, center);
+        map.on('click', (ev) => {
+          handleMapClick(ev, map, mapglAPI);
         });
       } catch (error) {
         setMapError(error.message);
@@ -179,47 +146,19 @@ const Map = () => {
       if (markerInstance) {
         markerInstance.destroy();
       }
+      if (firstPointMarker) {
+        firstPointMarker.destroy();
+      }
       if (map) {
+        map.off('click', handleMapClick);
         map.destroy();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleAllowGeolocation = () => {
-    setShowGeolocationPrompt(false);
-    setHasRequestedLocation(true);
-    setGeolocationPermission('granted');
-    getCurrentPosition();
-
-    updateRouteData({
-      stages: [],
-      totalTime: 0,
-      totalDistance: 0,
-      message: 'Геолокация разрешена! Теперь вы можете строить маршруты.',
-    });
-  };
-
-  const handleDenyGeolocation = () => {
-    setShowGeolocationPrompt(false);
-    setHasRequestedLocation(true);
-    setGeolocationPermission('denied');
-    // Открываем попап после запрета геолокации
-    updateRouteData({
-      stages: [],
-      totalTime: 0,
-      totalDistance: 0,
-      message: 'Геолокация запрещена. Некоторые функции могут быть недоступны.',
-    });
-  };
-
   return (
     <div className='w-full h-full space-y-4'>
-      {/* Промпт геолокации */}
-      {showGeolocationPrompt && (
-        <GeolocationPrompt onAllow={handleAllowGeolocation} onDeny={handleDenyGeolocation} isLoading={isGeoLoading} />
-      )}
-
       {/* Карта */}
       <div className='w-full h-full border border-gray-300 rounded-lg overflow-hidden relative'>
         {isMapLoading && (

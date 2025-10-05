@@ -1,10 +1,11 @@
 import React from 'react';
 import {Button} from '../../components/ui/button';
 import Map from './components/Map';
-import {useNavigate} from 'react-router-dom';
+import {useNavigate, useOutletContext} from 'react-router-dom';
 
 const HomePage = () => {
   const navigate = useNavigate();
+  const {selectedFromPoint, selectedToPoint} = useOutletContext() || {};
 
   const handleProfileClick = () => {
     navigate('/profile');
@@ -30,7 +31,7 @@ const HomePage = () => {
           <span className='text-white text-sm font-medium'>💬</span>
         </button>
       </div>
-      <Map />
+      <Map selectedFromPoint={selectedFromPoint} selectedToPoint={selectedToPoint} />
     </article>
   );
 };

@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useEffect, useState, useContext} from 'react';
 import carIcon from '../Shared/imgs/Car Icon.svg';
 import busIcon from '../Shared/imgs/bus.svg';
 import walkingIcon from '../Shared/imgs/person-standing.svg';
@@ -17,108 +17,59 @@ import tipsIcon from '../Shared/imgs/Tips Icon.svg';
 import greenCircle from '../Shared/imgs/greenCircle.svg';
 import blueCircle from '../Shared/imgs/blueCircle.svg';
 import equalIcon from '../Shared/imgs/equal.svg';
-import {geocodingService} from '../Api/geocodingService';
-import {useDebounce} from '../Shared/hooks/useDebounce';
+import {useStore} from '../App/store';
+import {wheelchairService} from '../Api/wheelchairService';
+import {Directions} from '@2gis/mapgl-directions';
+import {ROUTING_API_KEY} from '../Api/config';
+import {MapContext} from '../Shared/MapContenxProvider';
 
-const Finder = ({onAddressSelect}) => {
+const Finder = () => {
   const [fromValue, setFromValue] = useState('');
   const [toValue, setToValue] = useState('');
   const [selectedTransport, setSelectedTransport] = useState('car');
+  const [isLoading, setIsLoading] = useState(false);
+  const {firstPoint, secondPoint} = useStore();
+  const [mapInstance] = useContext(MapContext);
 
-  // Состояние для поиска адресов
-  const [fromSuggestions, setFromSuggestions] = useState([]);
-  const [toSuggestions, setToSuggestions] = useState([]);
-  const [showFromSuggestions, setShowFromSuggestions] = useState(false);
-  const [showToSuggestions, setShowToSuggestions] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  useEffect(() => {
+    if (firstPoint) {
+      setFromValue(firstPoint?.full_name);
+    }
+    if (secondPoint) {
+      setToValue(secondPoint?.full_name);
+    }
+  }, [firstPoint, secondPoint]);
 
-  // Refs для управления фокусом
-  const fromInputRef = useRef(null);
-  const toInputRef = useRef(null);
-  const fromSuggestionsRef = useRef(null);
-  const toSuggestionsRef = useRef(null);
-
-  // Debounced значения для поиска
-  const debouncedFromValue = useDebounce(fromValue, 300);
-  const debouncedToValue = useDebounce(toValue, 300);
-
-  // Функция поиска адресов
-  const searchAddresses = async (query, setSuggestions) => {
-    if (query.length < 2) {
-      setSuggestions([]);
+  const handleWheelchairRoute = async () => {
+    if (!firstPoint || !secondPoint) {
+      alert('Пожалуйста, выберите начальную и конечную точки на карте');
       return;
     }
 
-    setIsSearching(true);
+    setIsLoading(true);
     try {
-      const results = await geocodingService.searchAddresses(query);
-      setSuggestions(results);
+      const points = [
+        {lon: `${firstPoint.lon}`, lat: `${firstPoint.lat}`, type: 'stop'},
+        {lon: `${secondPoint.lon}`, lat: `${secondPoint.lat}`, type: 'stop'},
+      ];
+      console.log('Points:', points);
+      const response = await wheelchairService.getWheelchairRoute(points);
+      console.log('Маршрут для инвалидных колясок:', response);
+
+      const directions = new Directions(mapInstance, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+      const directionsPoints = response.query.points.map((point) => [parseFloat(point.lon), parseFloat(point.lat)]);
+      directions.pedestrianRoute({
+        points: directionsPoints,
+      });
     } catch (error) {
-      console.error('Error searching addresses:', error);
-      setSuggestions([]);
+      console.error('Ошибка при получении маршрута:', error);
+      alert('Ошибка при получении маршрута для инвалидных колясок');
     } finally {
-      setIsSearching(false);
+      setIsLoading(false);
     }
   };
-
-  // Обработчики выбора адреса
-  const handleFromAddressSelect = (address) => {
-    setFromValue(address.full_name || address.address_name);
-    setShowFromSuggestions(false);
-    if (onAddressSelect) {
-      onAddressSelect('from', address);
-    }
-  };
-
-  const handleToAddressSelect = (address) => {
-    setToValue(address.full_name || address.address_name);
-    setShowToSuggestions(false);
-    if (onAddressSelect) {
-      onAddressSelect('to', address);
-    }
-  };
-
-  // Эффекты для поиска при изменении debounced значений
-  useEffect(() => {
-    if (debouncedFromValue) {
-      searchAddresses(debouncedFromValue, setFromSuggestions);
-    } else {
-      setFromSuggestions([]);
-    }
-  }, [debouncedFromValue]);
-
-  useEffect(() => {
-    if (debouncedToValue) {
-      searchAddresses(debouncedToValue, setToSuggestions);
-    } else {
-      setToSuggestions([]);
-    }
-  }, [debouncedToValue]);
-
-  // Обработчики клика вне области для закрытия выпадающих списков
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (
-        fromSuggestionsRef.current &&
-        !fromSuggestionsRef.current.contains(event.target) &&
-        fromInputRef.current &&
-        !fromInputRef.current.contains(event.target)
-      ) {
-        setShowFromSuggestions(false);
-      }
-      if (
-        toSuggestionsRef.current &&
-        !toSuggestionsRef.current.contains(event.target) &&
-        toInputRef.current &&
-        !toInputRef.current.contains(event.target)
-      ) {
-        setShowToSuggestions(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const transportOptions = [
     {id: 'car', icon: carIcon, label: 'На машине'},
@@ -140,90 +91,28 @@ const Finder = ({onAddressSelect}) => {
     <div className='bg-[#222222] text-white h-full flex flex-col justify-between'>
       <div>
         <div className=''>
-          <div className='relative'>
-            <div className='flex items-center space-x-3 bg-[#2F2F2F] h-[40px] rounded-lg p-3'>
-              <img src={greenCircle} alt='' className='w-3 h-3' />
-              <input
-                ref={fromInputRef}
-                type='text'
-                placeholder='Откуда поедем?'
-                value={fromValue}
-                onChange={(e) => {
-                  setFromValue(e.target.value);
-                  setShowFromSuggestions(true);
-                }}
-                onFocus={() => setShowFromSuggestions(true)}
-                className='flex-1 bg-transparent text-white placeholder-gray-400 outline-none'
-              />
-              {isSearching && fromValue && (
-                <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
-              )}
-              <img src={equalIcon} alt='' className='w-4 h-4' />
-            </div>
-
-            {/* Выпадающий список для "Откуда" */}
-            {showFromSuggestions && fromSuggestions.length > 0 && (
-              <div
-                ref={fromSuggestionsRef}
-                className='absolute top-full left-0 right-0 mt-1 bg-[#2F2F2F] rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto'
-              >
-                {fromSuggestions.map((address, index) => (
-                  <div
-                    key={index}
-                    onClick={() => handleFromAddressSelect(address)}
-                    className='p-3 hover:bg-[#404040] cursor-pointer border-b border-gray-600 last:border-b-0'
-                  >
-                    <div className='text-white text-sm font-medium'>{address.full_name || address.address_name}</div>
-                    {address.address_name && address.address_name !== address.full_name && (
-                      <div className='text-gray-400 text-xs mt-1'>{address.address_name}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className='flex items-center space-x-3 bg-[#2F2F2F] h-[40px] rounded-lg p-3 mb-3'>
+            <img src={greenCircle} alt='' className='w-3 h-3' />
+            <input
+              type='text'
+              placeholder='Откуда поедем?'
+              value={fromValue}
+              onChange={(e) => setFromValue(e.target.value)}
+              className='flex-1 bg-transparent text-white placeholder-gray-400 outline-none'
+            />
+            <img src={equalIcon} alt='' className='w-4 h-4' />
           </div>
 
-          <div className='relative'>
-            <div className='flex items-center space-x-3 bg-[#2F2F2F] h-[40px] rounded-lg p-3'>
-              <img src={blueCircle} alt='' className='w-3 h-3' />
-              <input
-                ref={toInputRef}
-                type='text'
-                placeholder='Куда поедем?'
-                value={toValue}
-                onChange={(e) => {
-                  setToValue(e.target.value);
-                  setShowToSuggestions(true);
-                }}
-                onFocus={() => setShowToSuggestions(true)}
-                className='flex-1 bg-transparent text-white placeholder-gray-400 outline-none'
-              />
-              {isSearching && toValue && (
-                <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
-              )}
-              <img src={equalIcon} alt='' className='w-4 h-4' />
-            </div>
-
-            {/* Выпадающий список для "Куда" */}
-            {showToSuggestions && toSuggestions.length > 0 && (
-              <div
-                ref={toSuggestionsRef}
-                className='absolute top-full left-0 right-0 mt-1 bg-[#2F2F2F] rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto'
-              >
-                {toSuggestions.map((address, index) => (
-                  <div
-                    key={index}
-                    onClick={() => handleToAddressSelect(address)}
-                    className='p-3 hover:bg-[#404040] cursor-pointer border-b border-gray-600 last:border-b-0'
-                  >
-                    <div className='text-white text-sm font-medium'>{address.full_name || address.address_name}</div>
-                    {address.address_name && address.address_name !== address.full_name && (
-                      <div className='text-gray-400 text-xs mt-1'>{address.address_name}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className='flex items-center space-x-3 bg-[#2F2F2F] h-[40px] rounded-lg p-3'>
+            <img src={blueCircle} alt='' className='w-3 h-3' />
+            <input
+              type='text'
+              placeholder='Куда поедем?'
+              value={toValue}
+              onChange={(e) => setToValue(e.target.value)}
+              className='flex-1 bg-transparent text-white placeholder-gray-400 outline-none'
+            />
+            <img src={equalIcon} alt='' className='w-4 h-4' />
           </div>
         </div>
 
@@ -257,6 +146,21 @@ const Finder = ({onAddressSelect}) => {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Кнопка маршрута для инвалидных колясок */}
+        <div className='pb-4'>
+          <button
+            onClick={handleWheelchairRoute}
+            disabled={isLoading || !firstPoint || !secondPoint}
+            className={`w-full py-3 px-4 rounded-lg font-medium transition-colors ${
+              isLoading || !firstPoint || !secondPoint
+                ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {isLoading ? 'Загрузка...' : 'Маршрут для инвалидных колясок'}
+          </button>
         </div>
       </div>
 

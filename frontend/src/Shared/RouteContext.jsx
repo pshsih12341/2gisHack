@@ -12,7 +12,7 @@ export const useRoute = () => {
 
 export const RouteProvider = ({children}) => {
   const [routeData, setRouteData] = useState(null);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
 
   const updateRouteData = (data) => {
     setRouteData(data);

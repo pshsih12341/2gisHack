@@ -17,7 +17,7 @@ const Layout = () => {
       <BottomDrawer
         isOpen={isDrawerOpen}
         onToggle={toggleDrawer}
-        title={routeData ? 'Детали маршрута' : 'Информация о маршруте'}
+        title={routeData ? 'Детали маршрута' : 'Построение маршрута'}
       >
         <Finder />
       </BottomDrawer>

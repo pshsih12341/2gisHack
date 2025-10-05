@@ -7,4 +7,5 @@ const MapProvider = (props) => {
   return <MapContext.Provider value={[mapInstance, setMapInstance]}>{props.children}</MapContext.Provider>;
 };
 
+export {MapContext};
 export default MapProvider;

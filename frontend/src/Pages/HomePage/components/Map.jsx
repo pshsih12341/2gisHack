@@ -1,15 +1,13 @@
 import React, {useEffect, useState} from 'react';
 import {load} from '@2gis/mapgl';
+import {Directions} from '@2gis/mapgl-directions';
 import {useGeolocation} from '../../../Shared/hooks/useGeolocation';
 import GeolocationPrompt from '../../../components/GeolocationPrompt';
 import markerIcon from '../../../Shared/imgs/mark.png';
-import RoutingService from '../../../Api/routingService';
-import {ROUTING_API_KEY} from '../../../Api/config';
-import axios from 'axios';
-import {bigResponce} from '../consts';
-import wellknown from 'wellknown';
 import {useRoute} from '../../../Shared/RouteContext';
 import {useStore} from '../../../App/store';
+import {ROUTING_API_KEY} from '../../../Api/config';
+import axios from 'axios';
 
 const MapWrapper = React.memo(
   () => {
@@ -20,17 +18,16 @@ const MapWrapper = React.memo(
 
 const Map = () => {
   const [mapInstance, setMapInstance] = useState(null);
-  const [sourceInstance, setSourceInstance] = useState(null);
   const [markerInstance, setMarkerInstance] = useState(null);
-  const [mapglAPIState, setMapglAPIState] = useState(null);
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapError, setMapError] = useState(null);
   const [showGeolocationPrompt, setShowGeolocationPrompt] = useState(false);
   const [hasRequestedLocation, setHasRequestedLocation] = useState(false);
+  const [directionsInstance, setDirectionsInstance] = useState(null);
 
   const {location, error: geoError, isLoading: isGeoLoading, getCurrentPosition} = useGeolocation();
   const {updateRouteData} = useRoute();
-  const {geolocationPermission, setGeolocationPermission} = useStore();
+  const {geolocationPermission, setGeolocationPermission, responsePoints, firstRoutePoint} = useStore();
 
   useEffect(() => {
     // Показываем промпт только если разрешение еще не запрашивалось
@@ -46,75 +43,106 @@ const Map = () => {
       markerInstance.setCoordinates([location.longitude, location.latitude]);
     }
   }, [location, mapInstance, markerInstance]);
-  function generateLayers(response, mapglAPI, map, isRoute) {
-    const colors = ['#0000ff', '#ff0000', '#00ff00', '#ffa500', '#800080'];
-    const layers = [];
-    console.log(response);
-    response?.stages?.forEach((stage, index) => {
-      const features = [];
-      stage.routes?.forEach((route) => {
-        if (isRoute) {
-          route?.raw_data?.maneuvers?.forEach((maneuver) => {
-            console.log(1);
-            maneuver?.outcoming_path?.geometry?.forEach((alternative) => {
-              console.log(2);
-              const geometry = wellknown.parse(alternative.selection);
-              if (geometry) {
-                features.push({
-                  type: 'Feature',
-                  geometry: geometry,
-                  properties: {
-                    bar: index.toString(),
-                  },
-                });
-              }
-            });
-          });
+
+  // Функция для построения маршрута по точкам из Zustand store
+  const buildRouteFromStore = async (map, points) => {
+    try {
+      if (directionsInstance) {
+        directionsInstance.clear();
+      }
+
+      const directions = new Directions(map, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+      setDirectionsInstance(directions);
+
+      console.log('Building route from Zustand store points:', points);
+      const directionsPoints = points.map((point) => [parseFloat(point.longitude), parseFloat(point.latitude)]);
+
+      console.log('Directions API points:', directionsPoints);
+
+      directions.pedestrianRoute({
+        points: directionsPoints,
+      });
+    } catch (error) {
+      console.error('Error building route from Zustand store:', error);
+    }
+  };
+  // Функция для построения маршрута по клику
+  const buildRouteOnClick = async (map, clickCoordinates) => {
+    try {
+      if (directionsInstance) {
+        directionsInstance.clear();
+      }
+
+      const directions = new Directions(map, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+      setDirectionsInstance(directions);
+
+      let startPoint;
+      console.log('buildRouteOnClick - location:', location);
+      console.log('buildRouteOnClick - markerInstance:', markerInstance);
+
+      if (location && location.longitude && location.latitude) {
+        startPoint = [location.longitude, location.latitude];
+        console.log('Using geolocation:', startPoint);
+      } else if (markerInstance) {
+        // Получаем координаты маркера как fallback
+        const markerCoords = markerInstance.getCoordinates();
+        if (markerCoords && markerCoords.length >= 2) {
+          startPoint = [markerCoords[0], markerCoords[1]];
+          console.log('Using marker coordinates:', startPoint);
         } else {
-          route?.raw_data?.movements?.forEach((movement) => {
-            movement?.alternatives?.forEach((alternative) => {
-              alternative?.geometry?.forEach((geom) => {
-                const geometry = wellknown.parse(geom.selection);
-                if (geometry) {
-                  features.push({
-                    type: 'Feature',
-                    geometry: geometry,
-                    properties: {
-                      bar: index.toString(),
-                    },
-                  });
-                }
-              });
-            });
-          });
+          startPoint = [37.61556, 55.75222];
+          console.log('Marker coords invalid, using default:', startPoint);
         }
+      } else {
+        startPoint = [37.61556, 55.75222];
+        console.log('No location or marker, using default coordinates:', startPoint);
+      }
+
+      // Конечная точка - место клика
+      const endPoint = [clickCoordinates[0], clickCoordinates[1]];
+
+      console.log('Building route from:', startPoint, 'to:', endPoint);
+
+      const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/route/safely`, {
+        points: [
+          {
+            lon: `${startPoint[0]}`,
+            lat: `${startPoint[1]}`,
+            type: 'stop',
+          },
+          {
+            lon: `${endPoint[0]}`,
+            lat: `${endPoint[1]}`,
+            type: 'stop',
+          },
+        ],
       });
 
-      const source = new mapglAPI.GeoJsonSource(map, {
-        data: {
-          type: 'FeatureCollection',
-          features: features,
-        },
-        attributes: {
-          bar: index.toString(),
-        },
-      });
-      const color = colors[index];
-      const layer = {
-        id: `my-polygons-layer-${index}`,
+      console.log('API Response:', response.data.query);
 
-        filter: ['match', ['sourceAttr', 'bar'], [index.toString()], true, false],
-        type: 'line',
-        style: {
-          color: color,
-          width: 4,
-        },
-      };
-      layers.push(layer);
-    });
-    return layers;
-  }
+      const points = response.data.query.points.map((point) => [
+        parseFloat(point.lon), // [longitude, latitude] - формат для Directions API
+        parseFloat(point.lat),
+      ]);
 
+      // Строим пешеходный маршрут
+      directions
+        .pedestrianRoute({
+          points: points,
+        })
+        .catch((error) => {
+          console.error('Error building route:', error);
+        });
+    } catch (error) {
+      console.error('Error building route on click:', error);
+    }
+  };
+
+  // Инициализация карты - запускается только один раз при монтировании
   useEffect(() => {
     let map;
     setIsMapLoading(true);
@@ -123,19 +151,22 @@ const Map = () => {
     const initMap = async () => {
       try {
         const mapglAPI = await load();
-        setMapglAPIState(mapglAPI);
-        const center = location ? [location.longitude, location.latitude] : [37.61556, 55.75222];
+        const center = firstRoutePoint
+          ? [firstRoutePoint.longitude, firstRoutePoint.latitude]
+          : location
+            ? [location.longitude, location.latitude]
+            : [37.61556, 55.75222];
 
         map = new mapglAPI.Map('map-container', {
           center,
           zoom: location ? 15 : 10,
-          key: 'dcae5afc-c412-4a64-a4a0-53e033d88bc6',
+          key: 'dcf704a4-be05-4c21-be87-e7f292ee00f1',
         });
 
         setMapInstance(map);
         setIsMapLoading(false);
         const marker = new mapglAPI.Marker(map, {
-          coordinates: center,
+          coordinates: location ? [location.longitude, location.latitude] : [37.61556, 55.75222],
           icon: markerIcon,
           size: [32, 32],
           anchor: [16, 32],
@@ -143,15 +174,24 @@ const Map = () => {
 
         marker.show();
         setMarkerInstance(marker);
+        if (responsePoints) {
+          buildRouteFromStore(map, responsePoints);
+        }
+        // Добавляем обработчик кликов на карту
+        map.on('click', (event) => {
+          const coordinates = [event.lngLat[0], event.lngLat[1]];
 
-        map.on('styleload', () => {
-          const layers = generateLayers(bigResponce, mapglAPI, map, true);
-          layers.forEach((layer) => {
-            map.addLayer(layer);
+          // Добавляем временный маркер в месте клика
+          const clickMarker = new mapglAPI.Marker(map, {
+            coordinates: coordinates,
+            icon: markerIcon,
+            size: [24, 24],
+            anchor: [12, 24],
           });
-        });
+          clickMarker.show();
 
-        map.on('click', handleMapClick);
+          buildRouteOnClick(map, coordinates);
+        });
       } catch (error) {
         setMapError(error.message);
         setIsMapLoading(false);
@@ -165,11 +205,11 @@ const Map = () => {
         markerInstance.destroy();
       }
       if (map) {
-        map.off('click', handleMapClick);
         map.destroy();
       }
     };
-  }, [location]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleAllowGeolocation = () => {
     setShowGeolocationPrompt(false);
@@ -198,36 +238,6 @@ const Map = () => {
     });
   };
 
-  // Функции для пешеходных маршрутов
-  const handleMapClick = async (event) => {
-    const coordinates = [event.lngLat[0], event.lngLat[1]];
-    // const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/plan-route`, {
-    //   query:
-    //     'Хочу доехать от метро Бунинская аллея до офиса 2гис на Даниловской набережной. Хочу сначала дойти до станции метро Бульвар Дмитрия Донского пешком, чтобы положить деньги в банкомат и где-нибудь поесть в фастфуде. Потом хочу добраться до конечной точки как можно быстрее на такси.',
-    //   region_id: 'moscow',
-    // });
-    const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/plan-route`, {
-      query:
-        'Хочу доехать от метро Бунинская аллея до офиса 2гис на Даниловской набережной. Хочу сначала дойти до станции метро Бульвар Дмитрия Донского пешком, чтобы положить деньги в банкомат и где-нибудь поесть в фастфуде. Потом хочу добраться до конечной точки как можно быстрее на такси.',
-      region_id: 'moscow',
-    });
-    if (mapInstance) {
-      mapInstance.destroy();
-    }
-    const newMap = new mapglAPIState.Map('map-container', {
-      center: coordinates,
-      zoom: 15,
-      key: 'dcae5afc-c412-4a64-a4a0-53e033d88bc6',
-    });
-    newMap.on('click', handleMapClick);
-    setMapInstance(newMap);
-    const layers = generateLayers(response.data, mapglAPIState, newMap, true);
-    newMap.on('styleload', () => {
-      layers.forEach((layer) => {
-        newMap.addLayer(layer);
-      });
-    });
-  };
   return (
     <div className='w-full h-full space-y-4'>
       {/* Промпт геолокации */}

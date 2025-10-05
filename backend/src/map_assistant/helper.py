@@ -17,7 +17,7 @@ def _normalize_points(points: List[Dict]) -> List[Dict]:
         out.append({"type": "stop", "lon": p["lon"], "lat": p["lat"]})
     return out
 
-async def call_routing_api(points: List[dict], additional_params: dict | None = None):
+async def call_routing_api(points: List[dict], additional_params: dict | None = None, *, alias_routes: bool = False):
     if additional_params is None:
         additional_params = {}
 
@@ -25,6 +25,7 @@ async def call_routing_api(points: List[dict], additional_params: dict | None = 
         "points": _normalize_points(points),
         "transport": "walking",
         "locale": "ru",
+        "output": "detailed"
     }
     body.update(additional_params)
 
@@ -32,16 +33,36 @@ async def call_routing_api(points: List[dict], additional_params: dict | None = 
     headers = {"Content-Type": "application/json"}
 
     async with httpx.AsyncClient() as client:
-        print(f"DEBUG: Sending request to 2GIS Routing API: {json.dumps(body, indent=2)}")
-        response = await client.post(GIS_ROUTING_URL, params=params, headers=headers, json=body)
-        print(f"DEBUG: Routing API response status: {response.status_code}")
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("routes"):
-                data["routes"] = sorted(data["routes"], key=lambda r: r["legs"][0]["duration"]["value"])
-            return data
-        raise HTTPException(status_code=response.status_code, detail=f"Routing API error: {response.text}")
-    
+        print(f"DEBUG: Sending request to 2GIS Routing API: {json.dumps(body, indent=2, ensure_ascii=False)}")
+        resp = await client.post(GIS_ROUTING_URL, params=params, headers=headers, json=body)
+        print(f"DEBUG: Routing API response status: {resp.status_code}")
+
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Routing API error: {resp.text}")
+
+        data = resp.json()
+
+        status = data.get("status")
+        if status != "OK":
+            msg = data.get("message") or status or "Unknown routing error"
+            raise HTTPException(status_code=502, detail=f"Routing API error: {msg}")
+        
+        routes = data.get("result") or []
+        if not isinstance(routes, list):
+            raise HTTPException(status_code=502, detail="Routing API response: 'result' is not a list")
+
+        def _dur(r: dict) -> int:
+            return int(r.get("total_duration") or 10**12)
+
+        routes.sort(key=_dur)
+
+        data["result"] = routes
+
+        if alias_routes:
+            data["routes"] = routes
+
+        return data
+        
 async def get_lit_streets_overpass(bbox: Tuple[float, float, float, float]) -> List[Tuple[float, float]]:
     """Overpass API: Ищем освещённые улицы (highway/footway lit=yes) в bbox, возвращаем midpoints как via-points"""
     min_lat, min_lon, max_lat, max_lon = bbox

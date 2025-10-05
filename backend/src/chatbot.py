@@ -592,7 +592,7 @@ class MapAssistant:
   ]
 }
 
-ВАЖНО: Отвечай только JSON, не более 500 символов. Не зацикливайся!"""
+ВАЖНО: Отвечай только JSON. Не зацикливайся!"""
 	
 	async def _geocode_address(self, address: str) -> Optional[Tuple[float, float, str]]:
 		"""Geocode an address using 2GIS Geocoder API.
@@ -981,10 +981,9 @@ class MapAssistant:
 			routes.extend(await self._get_taxi_routes(start_point, end_point, waypoints, route_preference))
 			routes.extend(await self._get_public_transport_routes(start_point, end_point, waypoints, "public_transport", start_time))
 		
+		logger.info(f"✅ ROUTING SUCCESS: Found {len(routes)} route options")
 		# Return only the first route to keep response size manageable
-		result_routes = routes[:1] if routes else []
-		logger.info(f"✅ ROUTING SUCCESS: Found {len(routes)} total route options, returning {len(result_routes)} route")
-		return result_routes
+		return routes[:1] if routes else []
 	
 	async def _get_taxi_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 							   waypoints: List[RoutePoint] = None, 
@@ -1612,9 +1611,7 @@ class MapAssistant:
 				routes.append(route)
 		
 		# Return only the first route to keep response size manageable
-		result_routes = routes[:1] if routes else []
-		logger.info(f"✅ ROUTING API PARSING: Found {len(routes)} routes, returning {len(result_routes)} route")
-		return result_routes
+		return routes[:1] if routes else []
 	
 	def _parse_public_transport_response(self, data: List[Dict[str, Any]]) -> List[Route]:
 		"""Parse public transport API response - simplified version."""
@@ -1671,9 +1668,7 @@ class MapAssistant:
 			routes.append(route)
 		
 		# Return only the first route to keep response size manageable
-		result_routes = routes[:1] if routes else []
-		logger.info(f"✅ PUBLIC TRANSPORT API PARSING: Found {len(routes)} routes, returning {len(result_routes)} route")
-		return result_routes
+		return routes[:1] if routes else []
 	
 	def _parse_single_route(self, route_data: Dict[str, Any], route_id: str) -> Optional[Route]:
 		"""Parse a single route from API response."""

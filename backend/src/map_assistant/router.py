@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
 
+from .reroute import reroute_with_slope_limit
+
 from .schemas import AdaptiveRequest
 from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_lit_streets_overpass, get_open_places_2gis
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
@@ -248,34 +250,48 @@ async def health_check():
 async def wheelchair_route(request: AdaptiveRequest):
     points_dict = [p.model_dump() for p in request.points]
     params = {
-        "avoid": ["ban_stairway", "dirt_road", "ferry", "highway"],
+        "filters": ["ban_stairway", "dirt_road", "ferry", "highway", "toll_road"],
         "need_altitudes": True,
-        "route_mode": "shortest",
-        "output": "detailed"
+        "route_mode": "shortest"
     }
-    try:
-        result = await call_routing_api(points_dict, params)
 
-        for route in result.get("routes", []):
-            max_angle = route.get("legs", [{}])[0].get("altitudes_info", {}).get("max_road_angle", 0)
-            print(f"DEBUG: Checking max_road_angle: {max_angle} degrees")
-            if max_angle > 5:
-                raise HTTPException(status_code=400, detail=f"Route has steep incline: {max_angle} degrees")
-            for leg in route.get("legs", []):
-                if leg.get("transport", {}).get("mode") == "metro":
-                    async with httpx.AsyncClient() as client:
-                        station_lon, station_lat = leg["points"][0]["lon"], leg["points"][0]["lat"]
-                        resp = await client.get(
-                            f"{GIS_PLACES_URL}/places/search",
-                            headers={"Authorization": f"Bearer {API_KEY}"},
-                            params={"lon": station_lon, "lat": station_lat, "radius": 100, "categories": "metro_stations"}
-                        )
-                        if resp.status_code == 200:
-                            items = resp.json().get("items", [])
-                            for item in items:
-                                if item.get("structure_info", {}).get("elevators_count", 0) == 0:
-                                    raise HTTPException(status_code=400, detail="Inaccessible metro station")
-        return result
+    try:
+        data = await call_routing_api(points_dict, params)
+        if data.get("status") != "OK" or "result" not in data:
+            raise HTTPException(status_code=502, detail=f"Routing API error: {data.get('message') or data.get('status')}")
+
+        routes = data.get("result") or []
+        if not routes:
+            raise HTTPException(status_code=404, detail="No routes found")
+
+        route = routes[0]
+        alt = route.get("altitudes_info") or {}
+        try:
+            max_angle = float(alt.get("max_road_angle") or 0.0)
+        except (TypeError, ValueError):
+            max_angle = 0.0
+
+        if max_angle > 5.0:
+            rebuilt, tries, info = await reroute_with_slope_limit(points_dict, params, max_angle_deg=5.0, max_tries=24)
+            if rebuilt:
+                return rebuilt
+            raise HTTPException(status_code=400, detail=f"No safe route (<=5°) after {tries} attempts")
+
+        disallowed_styles = {"undergroundway", "archway", "stairway"}
+        disallowed_zlevels = {"zlevel-negative"}
+        for man in (route.get("maneuvers") or []):
+            path = man.get("outcoming_path") or {}
+            for g in (path.get("geometry") or []):
+                if isinstance(g, dict):
+                    if g.get("style") in disallowed_styles:
+                        raise HTTPException(status_code=400, detail=f"Inaccessible segment style: {g.get('style')}")
+                    if g.get("zlevel") in disallowed_zlevels:
+                        raise HTTPException(status_code=400, detail=f"Inaccessible segment zlevel: {g.get('zlevel')}")
+
+        return data
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -284,7 +300,7 @@ async def safely_router(request: AdaptiveRequest):
     points_dict = [p.model_dump() for p in request.points]
     
     params = {
-        "avoid": [],
+        "filters": [],
         "need_altitudes": True,
         "route_mode": "shortest",
         "output": "detailed"

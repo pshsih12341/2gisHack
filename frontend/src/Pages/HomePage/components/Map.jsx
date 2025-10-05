@@ -69,7 +69,7 @@ const Map = () => {
     }
   };
   // Функция для построения маршрута по клику
-  const buildRouteOnClick = async (map, clickCoordinates) => {
+  const buildRouteOnClick = async (map, clickCoordinates, startPoint) => {
     try {
       if (directionsInstance) {
         directionsInstance.clear();
@@ -79,29 +79,6 @@ const Map = () => {
         directionsApiKey: ROUTING_API_KEY,
       });
       setDirectionsInstance(directions);
-
-      let startPoint;
-      console.log('buildRouteOnClick - location:', location);
-      console.log('buildRouteOnClick - markerInstance:', markerInstance);
-
-      if (location && location.longitude && location.latitude) {
-        startPoint = [location.longitude, location.latitude];
-        console.log('Using geolocation:', startPoint);
-      } else if (markerInstance) {
-        // Получаем координаты маркера как fallback
-        const markerCoords = markerInstance.getCoordinates();
-        if (markerCoords && markerCoords.length >= 2) {
-          startPoint = [markerCoords[0], markerCoords[1]];
-          console.log('Using marker coordinates:', startPoint);
-        } else {
-          startPoint = [37.61556, 55.75222];
-          console.log('Marker coords invalid, using default:', startPoint);
-        }
-      } else {
-        startPoint = [37.61556, 55.75222];
-        console.log('No location or marker, using default coordinates:', startPoint);
-      }
-
       // Конечная точка - место клика
       const endPoint = [clickCoordinates[0], clickCoordinates[1]];
 
@@ -180,8 +157,6 @@ const Map = () => {
         // Добавляем обработчик кликов на карту
         map.on('click', (event) => {
           const coordinates = [event.lngLat[0], event.lngLat[1]];
-
-          // Добавляем временный маркер в месте клика
           const clickMarker = new mapglAPI.Marker(map, {
             coordinates: coordinates,
             icon: markerIcon,
@@ -190,7 +165,7 @@ const Map = () => {
           });
           clickMarker.show();
 
-          buildRouteOnClick(map, coordinates);
+          buildRouteOnClick(map, coordinates, center);
         });
       } catch (error) {
         setMapError(error.message);

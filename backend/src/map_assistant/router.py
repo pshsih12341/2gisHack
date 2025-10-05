@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 import asyncio
 
 from .schemas import AdaptiveRequest
-from .helper import API_KEY, GIS_PLACES_URL, call_routing_api
+from .helper import API_KEY, GIS_PLACES_URL, call_routing_api, extract_bbox_from_route, get_lit_streets_overpass, get_open_places_2gis
 from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Route, RouteStage, EnhancedRouteResponse
 
 
@@ -277,4 +277,36 @@ async def wheelchair_route(request: AdaptiveRequest):
                                     raise HTTPException(status_code=400, detail="Inaccessible metro station")
         return result
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post('/route/safely')
+async def safely_router(request: AdaptiveRequest):
+    points_dict = [p.model_dump() for p in request.points]
+    
+    params = {
+        "avoid": [],
+        "need_altitudes": True,
+        "route_mode": "shortest",
+        "output": "detailed"
+    }
+
+    try:
+        base_result = await call_routing_api(points_dict, params)
+        bbox = extract_bbox_from_route(base_result)
+        min_lat, min_lon, max_lat, max_lon = bbox
+        bbox_str = f"{min_lon}, {min_lat}, {max_lon}, {max_lat}"
+
+        lit_midpoints = await get_lit_streets_overpass(bbox)
+        open_places = await get_open_places_2gis(bbox_str)
+        all_via = lit_midpoints + open_places
+
+        enhanced_points = points_dict + [{"type": "pref", "lon": str(lon), "lat": str(lat)} for lon, lat in all_via]
+        
+        safe_params = params.copy()
+
+        safe_result = await call_routing_api(enhanced_points, safe_params)
+        return safe_result
+    
+    except Exception as e:
+        print(f"DEBUG: Ошибка в safely_router: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

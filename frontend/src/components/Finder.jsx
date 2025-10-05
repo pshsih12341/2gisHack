@@ -19,6 +19,8 @@ import blueCircle from '../Shared/imgs/blueCircle.svg';
 import equalIcon from '../Shared/imgs/equal.svg';
 import {useStore} from '../App/store';
 import {wheelchairService} from '../Api/wheelchairService';
+import {restroomsService} from '../Api/restroomsService';
+import {lowStimulusService} from '../Api/lowStimulusService';
 import {Directions} from '@2gis/mapgl-directions';
 import {ROUTING_API_KEY} from '../Api/config';
 import {MapContext} from '../Shared/MapContenxProvider';
@@ -28,6 +30,8 @@ const Finder = () => {
   const [toValue, setToValue] = useState('');
   const [selectedTransport, setSelectedTransport] = useState('car');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRestroomsLoading, setIsRestroomsLoading] = useState(false);
+  const [isLowStimulusLoading, setIsLowStimulusLoading] = useState(false);
   const {firstPoint, secondPoint} = useStore();
   const [mapInstance] = useContext(MapContext);
 
@@ -68,6 +72,75 @@ const Finder = () => {
       alert('Ошибка при получении маршрута для инвалидных колясок');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRestroomsRoute = async () => {
+    if (!firstPoint || !secondPoint) {
+      alert('Пожалуйста, выберите начальную и конечную точки на карте');
+      return;
+    }
+
+    setIsRestroomsLoading(true);
+    try {
+      const points = [
+        {lon: `${firstPoint.lon}`, lat: `${firstPoint.lat}`, type: 'stop'},
+        {lon: `${secondPoint.lon}`, lat: `${secondPoint.lat}`, type: 'stop'},
+      ];
+      console.log('Restrooms Points:', points);
+      const response = await restroomsService.getRestroomsRoute(points);
+      console.log('Маршрут для туалетов:', response);
+
+      const directions = new Directions(mapInstance, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+
+      const directionsPoints = response.route.query.points.map((point) => [
+        parseFloat(point.lon),
+        parseFloat(point.lat),
+      ]);
+      directions.pedestrianRoute({
+        points: directionsPoints,
+      });
+    } catch (error) {
+      console.error('Ошибка при получении маршрута для туалетов:', error);
+      alert('Ошибка при получении маршрута для туалетов');
+    } finally {
+      setIsRestroomsLoading(false);
+    }
+  };
+
+  const handleLowStimulusRoute = async () => {
+    if (!firstPoint || !secondPoint) {
+      alert('Пожалуйста, выберите начальную и конечную точки на карте');
+      return;
+    }
+
+    setIsLowStimulusLoading(true);
+    try {
+      const points = [
+        {lon: `${firstPoint.lon}`, lat: `${firstPoint.lat}`, type: 'stop'},
+        {lon: `${secondPoint.lon}`, lat: `${secondPoint.lat}`, type: 'stop'},
+      ];
+      console.log('Low Stimulus Points:', points);
+      const response = await lowStimulusService.getLowStimulusRoute(points);
+      console.log('Маршрут для низкой стимуляции:', response);
+
+      const directions = new Directions(mapInstance, {
+        directionsApiKey: ROUTING_API_KEY,
+      });
+      const directionsPoints = response.route.query.points.map((point) => [
+        parseFloat(point.lon),
+        parseFloat(point.lat),
+      ]);
+      directions.pedestrianRoute({
+        points: directionsPoints,
+      });
+    } catch (error) {
+      console.error('Ошибка при получении маршрута для низкой стимуляции:', error);
+      alert('Ошибка при получении маршрута для низкой стимуляции');
+    } finally {
+      setIsLowStimulusLoading(false);
     }
   };
 
@@ -148,19 +221,45 @@ const Finder = () => {
           </div>
         </div>
 
-        {/* Кнопка маршрута для инвалидных колясок */}
+        {/* Кнопки специальных маршрутов - горизонтальная карусель */}
         <div className='pb-4'>
-          <button
-            onClick={handleWheelchairRoute}
-            disabled={isLoading || !firstPoint || !secondPoint}
-            className={`w-full py-3 px-4 rounded-lg font-medium transition-colors ${
-              isLoading || !firstPoint || !secondPoint
-                ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            {isLoading ? 'Загрузка...' : 'Маршрут для инвалидных колясок'}
-          </button>
+          <div className='flex space-x-2 overflow-x-auto'>
+            <button
+              onClick={handleWheelchairRoute}
+              disabled={isLoading || !firstPoint || !secondPoint}
+              className={`flex-shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                isLoading || !firstPoint || !secondPoint
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              {isLoading ? 'Загрузка...' : 'Инвалидные коляски'}
+            </button>
+
+            <button
+              onClick={handleRestroomsRoute}
+              disabled={isRestroomsLoading || !firstPoint || !secondPoint}
+              className={`flex-shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                isRestroomsLoading || !firstPoint || !secondPoint
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {isRestroomsLoading ? 'Загрузка...' : 'Туалеты'}
+            </button>
+
+            <button
+              onClick={handleLowStimulusRoute}
+              disabled={isLowStimulusLoading || !firstPoint || !secondPoint}
+              className={`flex-shrink-0 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                isLowStimulusLoading || !firstPoint || !secondPoint
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white'
+              }`}
+            >
+              {isLowStimulusLoading ? 'Загрузка...' : 'Нейроотличные'}
+            </button>
+          </div>
         </div>
       </div>
 

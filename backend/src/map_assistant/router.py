@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
 
+from .order_vias import order_and_filter_vias_along_route
+
 from .reroute import reroute_with_slope_limit
 
 from .schemas import AdaptiveRequest
@@ -330,27 +332,35 @@ async def safely_router(request: AdaptiveRequest):
 
         min_lat, min_lon, max_lat, max_lon = extract_bbox_from_route(base_result)
         if (min_lat, min_lon, max_lat, max_lon) == (0.0, 0.0, 0.0, 0.0):
-            # фолбэк: построим bbox по старт/финиш
-            start = (float(points_dict[0]["lat"]), float(points_dict[0]["lon"]))
-            end   = (float(points_dict[-1]["lat"]), float(points_dict[-1]["lon"]))
-            min_lat = min(start[0], end[0]); max_lat = max(start[0], end[0])
-            min_lon = min(start[1], end[1]); max_lon = max(start[1], end[1])
+            s_lat, s_lon = float(points_dict[0]["lat"]), float(points_dict[0]["lon"])
+            e_lat, e_lon = float(points_dict[-1]["lat"]), float(points_dict[-1]["lon"])
+            min_lat, max_lat = min(s_lat, e_lat), max(s_lat, e_lat)
+            min_lon, max_lon = min(s_lon, e_lon), max(s_lon, e_lon)
 
         bbox_str = f"{min_lon},{min_lat},{max_lon},{max_lat}"
 
         lit_midpoints = await get_lit_streets_overpass((min_lat, min_lon, max_lat, max_lon))
         open_places   = await get_open_places_2gis(bbox_str)
 
-        all_via = []
-        for a, b in zip(lit_midpoints, open_places):
-            all_via.extend([a, b])
-        if len(lit_midpoints) > len(open_places):
-            all_via.extend(lit_midpoints[len(open_places):])
-        elif len(open_places) > len(lit_midpoints):
-            all_via.extend(open_places[len(lit_midpoints):])
+        raw_candidates = lit_midpoints + open_places
+        seen = set(); candidates = []
+        for lon, lat in raw_candidates:
+            key = (round(lon,5), round(lat,5))
+            if key in seen: 
+                continue
+            seen.add(key)
+            candidates.append((lon, lat))
+
+        ordered_vias = order_and_filter_vias_along_route(
+            base_route,
+            candidates,
+            max_lateral_m=120,   # допустимый поперечный отступ от базового пути
+            min_step_m=350,      # минимальная дистанция вдоль пути между via
+            max_vias=8,          # верхний предел количества via
+        )
 
         enhanced_points = points_dict + [
-            {"type": "via", "lon": str(lon), "lat": str(lat)} for lon, lat in all_via
+            {"type": "via", "lon": str(lon), "lat": str(lat)} for lon, lat in ordered_vias
         ]
 
         safe_result = await call_routing_api(enhanced_points, base_params)
@@ -361,7 +371,7 @@ async def safely_router(request: AdaptiveRequest):
                 "X-Route-lit-bbox": bbox_str,
                 "X-Route-lit-count": str(len(lit_midpoints)),
                 "X-Route-open-places": str(len(open_places)),
-                "X-Route-via-count": str(len(all_via)),
+                "X-Route-via-count": str(len(ordered_vias)),
                 "X-Route-time-base": f"{base_met['duration_s']}",
                 "X-Route-time-safe": "NA",
                 "X-Route-angle-base": f"{base_met['max_angle_deg']:.1f}",
@@ -381,7 +391,7 @@ async def safely_router(request: AdaptiveRequest):
             "X-Route-lit-bbox": bbox_str,
             "X-Route-lit-count": str(len(lit_midpoints)),
             "X-Route-open-places": str(len(open_places)),
-            "X-Route-via-count": str(len(all_via)),
+            "X-Route-via-count": str(len(ordered_vias)),
             "X-Route-time-base": f"{base_met['duration_s']}",
             "X-Route-time-safe": f"{safe_met['duration_s']}",
             "X-Route-angle-base": f"{base_met['max_angle_deg']:.1f}",

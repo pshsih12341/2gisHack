@@ -561,6 +561,9 @@ class MapAssistant:
 - Для transport_preference: "any", "taxi_only", "car_only", "public_transport", "walking", "fastest", "ground_transport_only", "только метро", "только автобусы", "только трамвай", "только троллейбус", "только электричка"
 - Если разные виды транспорта для разных частей маршрута - разбей на этапы
 - Слово "обратно" означает возвращение к предыдущей точке отправления
+- КОНТЕКСТНЫЕ ЗАПРОСЫ: Если пользователь просит что-то "по пути", "у станции метро", "рядом с" - это означает поиск рядом с предыдущей точкой маршрута
+- Примеры контекстных запросов: "поесть в фастфуде у станции метро" = искать фастфуд рядом с указанной станцией метро
+- В waypoints всегда указывай полный контекст: если просят "фастфуд у станции метро X", то name="фастфуд", type="фастфуд", description="у станции метро X"
 
 ФОРМАТ ОТВЕТА (только JSON, без объяснений):
 
@@ -677,7 +680,7 @@ class MapAssistant:
 		result = " ".join(query_parts)
 		return result[:100]  # Limit query length
 	
-	def _create_contextual_search_query(self, name: str, place_type: str, context: str = None) -> str:
+	def _create_contextual_search_query(self, name: str, place_type: str, context: str = None, previous_point: RoutePoint = None) -> str:
 		"""Create a contextual search query using 2GIS API capabilities."""
 		query_parts = []
 		
@@ -687,6 +690,7 @@ class MapAssistant:
 			type_mapping = {
 				"станция метро": "метро",
 				"фастфуд": "ресторан быстрого питания",
+				"еда": "ресторан быстрого питания",  # Map "еда" to fast food
 				"кафе": "кафе",
 				"ресторан": "ресторан",
 				"аптека": "аптека",
@@ -697,7 +701,7 @@ class MapAssistant:
 			query_parts.append(search_type)
 		
 		# Add specific name if provided
-		if name and name.lower() not in ["фастфуд", "кафе", "ресторан", "аптека", "магазин"]:
+		if name and name.lower() not in ["фастфуд", "кафе", "ресторан", "аптека", "магазин", "еда"]:
 			clean_name = name.replace("станция метро ", "").replace("метро ", "").strip()
 			query_parts.append(clean_name)
 		
@@ -705,10 +709,19 @@ class MapAssistant:
 		if context:
 			query_parts.append(context)
 		
+		# Add context from previous point if available
+		if previous_point:
+			# If previous point is a metro station, add it to the query
+			if "метро" in previous_point.name.lower() or "станция" in previous_point.name.lower():
+				station_name = previous_point.name.replace("станция метро ", "").replace("метро ", "").strip()
+				query_parts.append(f"у станции метро {station_name}")
+			else:
+				query_parts.append(f"рядом с {previous_point.name}")
+		
 		# Create enhanced query with geocriteria
 		if "метро" in place_type.lower() or "станция" in place_type.lower():
 			# For metro stations, add "у станции метро" context
-			if len(query_parts) > 1:
+			if len(query_parts) > 1 and not any("у станции метро" in part for part in query_parts):
 				query_parts.append("у станции метро")
 		
 		result = " ".join(query_parts)
@@ -968,9 +981,10 @@ class MapAssistant:
 			routes.extend(await self._get_taxi_routes(start_point, end_point, waypoints, route_preference))
 			routes.extend(await self._get_public_transport_routes(start_point, end_point, waypoints, "public_transport", start_time))
 		
-		logger.info(f"✅ ROUTING SUCCESS: Found {len(routes)} route options")
 		# Return only the first route to keep response size manageable
-		return routes[:1] if routes else []
+		result_routes = routes[:1] if routes else []
+		logger.info(f"✅ ROUTING SUCCESS: Found {len(routes)} total route options, returning {len(result_routes)} route")
+		return result_routes
 	
 	async def _get_taxi_routes(self, start_point: RoutePoint, end_point: RoutePoint, 
 							   waypoints: List[RoutePoint] = None, 
@@ -1598,7 +1612,9 @@ class MapAssistant:
 				routes.append(route)
 		
 		# Return only the first route to keep response size manageable
-		return routes[:1] if routes else []
+		result_routes = routes[:1] if routes else []
+		logger.info(f"✅ ROUTING API PARSING: Found {len(routes)} routes, returning {len(result_routes)} route")
+		return result_routes
 	
 	def _parse_public_transport_response(self, data: List[Dict[str, Any]]) -> List[Route]:
 		"""Parse public transport API response - simplified version."""
@@ -1655,7 +1671,9 @@ class MapAssistant:
 			routes.append(route)
 		
 		# Return only the first route to keep response size manageable
-		return routes[:1] if routes else []
+		result_routes = routes[:1] if routes else []
+		logger.info(f"✅ PUBLIC TRANSPORT API PARSING: Found {len(routes)} routes, returning {len(result_routes)} route")
+		return result_routes
 	
 	def _parse_single_route(self, route_data: Dict[str, Any], route_id: str) -> Optional[Route]:
 		"""Parse a single route from API response."""
@@ -2096,8 +2114,8 @@ class MapAssistant:
 						stage_points.append(waypoint)
 						all_points.append(waypoint)
 					else:
-						# Make new search request
-						search_query = self._create_contextual_search_query(name, place_type, desc)
+						# Make new search request with context from previous points
+						search_query = self._create_contextual_search_query(name, place_type, desc, last_end_point)
 						places = await self._search_places(search_query)
 						
 						if places:
@@ -2211,26 +2229,31 @@ class MapAssistant:
 		# Process waypoints
 		waypoints = parsed_info.get("waypoints", [])
 		logger.info(f"🛍️ MAP ASSISTANT: Processing {len(waypoints)} waypoints")
+		last_point = points[0] if points else None  # Use start point as reference
+		
 		for i, waypoint in enumerate(waypoints):
 			if isinstance(waypoint, dict):
 				name = waypoint.get("name", "")
 				place_type = waypoint.get("type", "")
 				description = waypoint.get("description", "")
 				
-				search_query = self._create_contextual_search_query(name, place_type, description)
+				# Use previous point as reference for contextual search
+				search_query = self._create_contextual_search_query(name, place_type, description, last_point)
 				places = await self._search_places(search_query)
 				
 				if places:
 					place = places[0]
 					point = place.get("point", {})
-					points.append(RoutePoint(
+					waypoint_point = RoutePoint(
 						name=place.get("name", name),
 						latitude=float(point.get("lat", 0)),
 						longitude=float(point.get("lon", 0)),
 						point_type="waypoint",
 						description=description,
 						address=place.get("address_name")
-					))
+					)
+					points.append(waypoint_point)
+					last_point = waypoint_point  # Update reference point for next waypoint
 					friendly_text_parts.append(f"🛍️ По дороге: {place.get('name')} ({place.get('address_name', '')})")
 		
 		# Process end point

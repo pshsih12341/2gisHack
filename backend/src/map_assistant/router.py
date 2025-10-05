@@ -18,6 +18,16 @@ from ..chatbot import MapAssistant, RoutePoint, RouteResponse, RouteSegment, Rou
 router = APIRouter(prefix="/map", tags=["Map Assistant"])
 
 
+def convert_point_type_to_api_type(point_type: str) -> str:
+    """Convert internal point_type to 2GIS API type."""
+    if point_type in ["start", "end"]:
+        return "stop"
+    elif point_type == "waypoint":
+        return "pref"
+    else:
+        return "stop"  # Default fallback
+
+
 class RouteRequest(BaseModel):
     """Request model for route planning."""
     query: str
@@ -29,9 +39,10 @@ class RoutePointResponse(BaseModel):
     name: str
     latitude: float
     longitude: float
-    point_type: str
+    type: str  # Changed from point_type to type
     description: Optional[str] = None
     address: Optional[str] = None
+    start: Optional[bool] = None  # Added start field
 
 
 class RouteSegmentResponse(BaseModel):
@@ -100,17 +111,20 @@ async def plan_route(request: RouteRequest):
         response: EnhancedRouteResponse = await assistant.process_route_request(request.query)
         
         # Конвертируем точки в формат ответа
-        points_response = [
-            RoutePointResponse(
+        points_response = []
+        for i, point in enumerate(response.points):
+            api_type = convert_point_type_to_api_type(point.point_type)
+            is_start = point.point_type == "start" or (i == 0 and point.point_type == "end")
+            
+            points_response.append(RoutePointResponse(
                 name=point.name,
                 latitude=point.latitude,
                 longitude=point.longitude,
-                point_type=point.point_type,
+                type=api_type,
                 description=point.description,
-                address=point.address
-            )
-            for point in response.points
-        ]
+                address=point.address,
+                start=is_start
+            ))
         
         # Конвертируем маршруты в формат ответа
         routes_response = None
@@ -152,9 +166,10 @@ async def plan_route(request: RouteRequest):
                         name=stage.start_point.name,
                         latitude=stage.start_point.latitude,
                         longitude=stage.start_point.longitude,
-                        point_type=stage.start_point.point_type,
+                        type=convert_point_type_to_api_type(stage.start_point.point_type),
                         description=stage.start_point.description,
-                        address=stage.start_point.address
+                        address=stage.start_point.address,
+                        start=True
                     )
                 
                 stage_end_point = None
@@ -163,9 +178,10 @@ async def plan_route(request: RouteRequest):
                         name=stage.end_point.name,
                         latitude=stage.end_point.latitude,
                         longitude=stage.end_point.longitude,
-                        point_type=stage.end_point.point_type,
+                        type=convert_point_type_to_api_type(stage.end_point.point_type),
                         description=stage.end_point.description,
-                        address=stage.end_point.address
+                        address=stage.end_point.address,
+                        start=False
                     )
                 
                 stage_waypoints = None
@@ -175,9 +191,10 @@ async def plan_route(request: RouteRequest):
                             name=wp.name,
                             latitude=wp.latitude,
                             longitude=wp.longitude,
-                            point_type=wp.point_type,
+                            type=convert_point_type_to_api_type(wp.point_type),
                             description=wp.description,
-                            address=wp.address
+                            address=wp.address,
+                            start=False
                         )
                         for wp in stage.waypoints
                     ]

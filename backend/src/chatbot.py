@@ -620,6 +620,159 @@ class MapAssistant:
 		logger.warning(f"⚠️ PLACES API: No results found for '{address}'")
 		return None
 	
+	def _generate_detailed_route_text(self, stages: List[RouteStage] = None, routes: List[Route] = None, points: List[RoutePoint] = None, all_points: List[RoutePoint] = None) -> str:
+		"""Generate detailed route description text."""
+		text_parts = []
+		
+		if stages:
+			# Multi-stage route
+			text_parts.append("🗺️ **ПОДРОБНЫЙ МАРШРУТ ПОСТРОЕН!**")
+			text_parts.append("")
+			
+			total_duration = 0
+			total_distance = 0
+			
+			for i, stage in enumerate(stages):
+				text_parts.append(f"## 🔄 **ЭТАП {i+1}:** {stage.description}")
+				text_parts.append("")
+				
+				if stage.start_point and stage.end_point:
+					text_parts.append(f"📍 **Откуда:** {stage.start_point.name}")
+					if stage.start_point.address:
+						text_parts.append(f"   📍 Адрес: {stage.start_point.address}")
+					text_parts.append("")
+					
+					text_parts.append(f"🎯 **Куда:** {stage.end_point.name}")
+					if stage.end_point.address:
+						text_parts.append(f"   📍 Адрес: {stage.end_point.address}")
+					text_parts.append("")
+				
+				if stage.transport_preference and stage.transport_preference != "any":
+					transport_names = {
+						"bus": "автобус",
+						"metro": "метро", 
+						"taxi": "такси",
+						"walking": "пешком",
+						"car": "автомобиль",
+						"public_transport": "общественный транспорт",
+						"только автобусы": "автобус",
+						"только метро": "метро"
+					}
+					transport_name = transport_names.get(stage.transport_preference, stage.transport_preference)
+					text_parts.append(f"🚌 **Транспорт:** {transport_name}")
+					text_parts.append("")
+				
+				if stage.waypoints:
+					text_parts.append(f"🛍️ **Промежуточные точки:**")
+					for wp in stage.waypoints:
+						text_parts.append(f"   • **{wp.name}**")
+						if wp.description:
+							text_parts.append(f"     📝 {wp.description}")
+						if wp.address:
+							text_parts.append(f"     📍 {wp.address}")
+					text_parts.append("")
+				
+				if stage.routes:
+					route = stage.routes[0]  # Take first route
+					duration_min = route.total_duration // 60
+					distance_km = route.total_distance // 1000
+					
+					text_parts.append(f"⏱️ **Время в пути:** {duration_min} минут")
+					text_parts.append(f"📏 **Расстояние:** {distance_km} км")
+					
+					if route.transfer_count > 0:
+						text_parts.append(f"🔄 **Пересадок:** {route.transfer_count}")
+					
+					if route.transport_types:
+						transport_names = {
+							"bus": "автобус",
+							"metro": "метро",
+							"taxi": "такси", 
+							"walking": "пешком",
+							"car": "автомобиль",
+							"public_transport": "общественный транспорт"
+						}
+						types_text = ", ".join([transport_names.get(t, t) for t in route.transport_types])
+						text_parts.append(f"🚌 **Используемый транспорт:** {types_text}")
+					
+					# Add route summary if available
+					if route.summary:
+						text_parts.append(f"📋 **Описание маршрута:** {route.summary}")
+					
+					total_duration += route.total_duration
+					total_distance += route.total_distance
+				
+				text_parts.append("---")
+				text_parts.append("")
+			
+			# Add summary
+			if total_duration > 0 and total_distance > 0:
+				text_parts.append("## 📊 **ОБЩАЯ ИНФОРМАЦИЯ О МАРШРУТЕ:**")
+				text_parts.append("")
+				text_parts.append(f"⏱️ **Общее время в пути:** {total_duration // 60} минут")
+				text_parts.append(f"📏 **Общее расстояние:** {total_distance // 1000} км")
+				text_parts.append(f"🔄 **Количество этапов:** {len(stages)}")
+				text_parts.append(f"📍 **Всего точек:** {len(all_points) if all_points else 'N/A'}")
+		
+		elif routes and points:
+			# Single-stage route
+			text_parts.append("🗺️ **ПОДРОБНЫЙ МАРШРУТ ПОСТРОЕН!**")
+			text_parts.append("")
+			
+			# Add points description
+			if points:
+				text_parts.append("## 📍 **ТОЧКИ МАРШРУТА:**")
+				text_parts.append("")
+				for i, point in enumerate(points):
+					if point.point_type == "start":
+						text_parts.append(f"🚀 **Отправление:** {point.name}")
+						if point.address:
+							text_parts.append(f"   📍 Адрес: {point.address}")
+					elif point.point_type == "end":
+						text_parts.append(f"🎯 **Назначение:** {point.name}")
+						if point.address:
+							text_parts.append(f"   📍 Адрес: {point.address}")
+					elif point.point_type == "waypoint":
+						text_parts.append(f"🛍️ **По дороге:** {point.name}")
+						if point.description:
+							text_parts.append(f"   📝 {point.description}")
+						if point.address:
+							text_parts.append(f"   📍 {point.address}")
+				text_parts.append("")
+			
+			# Add route details
+			if routes:
+				route = routes[0]  # Take first route
+				text_parts.append("## 🚗 **ДЕТАЛИ МАРШРУТА:**")
+				text_parts.append("")
+				
+				duration_min = route.total_duration // 60
+				distance_km = route.total_distance // 1000
+				
+				text_parts.append(f"⏱️ **Время в пути:** {duration_min} минут")
+				text_parts.append(f"📏 **Расстояние:** {distance_km} км")
+				
+				if route.transfer_count > 0:
+					text_parts.append(f"🔄 **Пересадок:** {route.transfer_count}")
+				
+				if route.transport_types:
+					transport_names = {
+						"bus": "автобус",
+						"metro": "метро",
+						"taxi": "такси", 
+						"walking": "пешком",
+						"car": "автомобиль",
+						"public_transport": "общественный транспорт"
+					}
+					types_text = ", ".join([transport_names.get(t, t) for t in route.transport_types])
+					text_parts.append(f"🚌 **Транспорт:** {types_text}")
+				
+				# Add route summary if available
+				if route.summary:
+					text_parts.append(f"📋 **Описание:** {route.summary}")
+		
+		return "\n".join(text_parts)
+	
 	def _improve_search_query(self, name: str, place_type: str) -> str:
 		"""Improve search query by cleaning and optimizing it for 2GIS API."""
 		# Remove duplicate words and clean the query
@@ -2145,8 +2298,8 @@ class MapAssistant:
 			if stage_routes:
 				friendly_text_parts.append(f"   🚗 {len(stage_routes)} вариантов маршрута")
 		
-		# Generate overall friendly text
-		friendly_text = f"✅ Многоэтапный маршрут построен!\n\n" + "\n".join(friendly_text_parts)
+		# Generate detailed friendly text using new method
+		friendly_text = self._generate_detailed_route_text(stages=stages, all_points=all_points)
 		
 		logger.info(f"✅ MAP ASSISTANT: Multi-stage route completed with {len(stages)} stages and {len(all_points)} total points")
 		
@@ -2248,13 +2401,8 @@ class MapAssistant:
 			
 			routes = await self._get_routing_options(start_point, end_point, waypoints, transport_preference, route_preference)
 		
-		# Generate friendly text
-		friendly_text = f"✅ Маршрут построен!\n\n" + "\n".join(friendly_text_parts)
-		
-		if routes:
-			friendly_text += f"\n\n🚗 Доступные варианты маршрутов:\n"
-			for i, route in enumerate(routes[:3], 1):
-				friendly_text += f"{i}. {route.summary}\n"
+		# Generate detailed friendly text using new method
+		friendly_text = self._generate_detailed_route_text(routes=routes, points=points)
 		
 		logger.info(f"✅ MAP ASSISTANT: Single-stage route completed with {len(points)} points and {len(routes)} routes")
 		

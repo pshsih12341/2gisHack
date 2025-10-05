@@ -6,7 +6,7 @@ import markerIcon from '../../../Shared/imgs/mark.png';
 import RoutingService from '../../../Api/routingService';
 import {ROUTING_API_KEY} from '../../../Api/config';
 import axios from 'axios';
-import {bigResponce, responce} from '../consts';
+import {bigResponce} from '../consts';
 import wellknown from 'wellknown';
 import {useRoute} from '../../../Shared/RouteContext';
 import {useStore} from '../../../App/store';
@@ -46,16 +46,19 @@ const Map = () => {
       markerInstance.setCoordinates([location.longitude, location.latitude]);
     }
   }, [location, mapInstance, markerInstance]);
-  function generateLayers(response, mapglAPI, map) {
+  function generateLayers(response, mapglAPI, map, isRoute) {
     const colors = ['#0000ff', '#ff0000', '#00ff00', '#ffa500', '#800080'];
     const layers = [];
+    console.log(response);
     response?.stages?.forEach((stage, index) => {
       const features = [];
       stage.routes?.forEach((route) => {
-        route?.raw_data?.movements?.forEach((movement) => {
-          movement?.alternatives?.forEach((alternative) => {
-            alternative?.geometry?.forEach((geom) => {
-              const geometry = wellknown.parse(geom.selection);
+        if (isRoute) {
+          route?.raw_data?.maneuvers?.forEach((maneuver) => {
+            console.log(1);
+            maneuver?.outcoming_path?.geometry?.forEach((alternative) => {
+              console.log(2);
+              const geometry = wellknown.parse(alternative.selection);
               if (geometry) {
                 features.push({
                   type: 'Feature',
@@ -67,7 +70,24 @@ const Map = () => {
               }
             });
           });
-        });
+        } else {
+          route?.raw_data?.movements?.forEach((movement) => {
+            movement?.alternatives?.forEach((alternative) => {
+              alternative?.geometry?.forEach((geom) => {
+                const geometry = wellknown.parse(geom.selection);
+                if (geometry) {
+                  features.push({
+                    type: 'Feature',
+                    geometry: geometry,
+                    properties: {
+                      bar: index.toString(),
+                    },
+                  });
+                }
+              });
+            });
+          });
+        }
       });
 
       const source = new mapglAPI.GeoJsonSource(map, {
@@ -87,12 +107,11 @@ const Map = () => {
         type: 'line',
         style: {
           color: color,
-          width: 2,
+          width: 4,
         },
       };
       layers.push(layer);
     });
-    console.log(layers);
     return layers;
   }
 
@@ -110,7 +129,7 @@ const Map = () => {
         map = new mapglAPI.Map('map-container', {
           center,
           zoom: location ? 15 : 10,
-          key: 'dcae5afc-casdasd',
+          key: 'dcae5afc-c412-4a64-a4a0-53e033d88bc6',
         });
 
         setMapInstance(map);
@@ -126,9 +145,8 @@ const Map = () => {
         setMarkerInstance(marker);
 
         map.on('styleload', () => {
-          const layers = generateLayers(bigResponce, mapglAPI, map);
+          const layers = generateLayers(bigResponce, mapglAPI, map, true);
           layers.forEach((layer) => {
-            console.log(layer);
             map.addLayer(layer);
           });
         });
@@ -158,7 +176,7 @@ const Map = () => {
     setHasRequestedLocation(true);
     setGeolocationPermission('granted');
     getCurrentPosition();
-    // Открываем попап после разрешения геолокации
+
     updateRouteData({
       stages: [],
       totalTime: 0,
@@ -183,38 +201,33 @@ const Map = () => {
   // Функции для пешеходных маршрутов
   const handleMapClick = async (event) => {
     const coordinates = [event.lngLat[0], event.lngLat[1]];
-
-    // Генерируем слои для отображения на карте
-    const layers = generateLayers(bigResponce, mapglAPIState, mapInstance);
-    layers.forEach((layer) => {
-      try {
-        mapInstance.addLayer(layer);
-        console.log(`Layer ${layer.id} added successfully`);
-      } catch (error) {
-        console.error(`Error adding layer ${layer.id}:`, error);
-      }
+    // const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/plan-route`, {
+    //   query:
+    //     'Хочу доехать от метро Бунинская аллея до офиса 2гис на Даниловской набережной. Хочу сначала дойти до станции метро Бульвар Дмитрия Донского пешком, чтобы положить деньги в банкомат и где-нибудь поесть в фастфуде. Потом хочу добраться до конечной точки как можно быстрее на такси.',
+    //   region_id: 'moscow',
+    // });
+    const response = await axios.post(`https://2gis.misisxmisis.ru/api/map/plan-route`, {
+      query:
+        'Хочу доехать от метро Бунинская аллея до офиса 2гис на Даниловской набережной. Хочу сначала дойти до станции метро Бульвар Дмитрия Донского пешком, чтобы положить деньги в банкомат и где-нибудь поесть в фастфуде. Потом хочу добраться до конечной точки как можно быстрее на такси.',
+      region_id: 'moscow',
     });
-
-    // Обновляем данные маршрута в контексте
-    const mockRouteData = {
-      stages: bigResponce.stages || [],
-      totalTime: 45, // Примерное время в минутах
-      totalDistance: 2500, // Примерное расстояние в метрах
-      startPoint: {
-        lat: location?.latitude || 55.75222,
-        lng: location?.longitude || 37.61556,
-        name: 'Ваше местоположение',
-      },
-      endPoint: {
-        lat: coordinates[1],
-        lng: coordinates[0],
-        name: 'Выбранная точка',
-      },
-    };
-
-    updateRouteData(mockRouteData);
+    if (mapInstance) {
+      mapInstance.destroy();
+    }
+    const newMap = new mapglAPIState.Map('map-container', {
+      center: coordinates,
+      zoom: 15,
+      key: 'dcae5afc-c412-4a64-a4a0-53e033d88bc6',
+    });
+    newMap.on('click', handleMapClick);
+    setMapInstance(newMap);
+    const layers = generateLayers(response.data, mapglAPIState, newMap, true);
+    newMap.on('styleload', () => {
+      layers.forEach((layer) => {
+        newMap.addLayer(layer);
+      });
+    });
   };
-  console.log(mapInstance);
   return (
     <div className='w-full h-full space-y-4'>
       {/* Промпт геолокации */}

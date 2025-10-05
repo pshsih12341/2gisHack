@@ -6,7 +6,7 @@ import ProfilePage from '../Pages/ProfilePage';
 import NotFoundPage from '../Pages/NotFoundPage';
 
 import {Navigate} from 'react-router-dom';
-import {useStore} from './Store';
+import {useStore} from './store';
 
 const ProtectedRoute = ({children}) => {
   const {user} = useStore();
